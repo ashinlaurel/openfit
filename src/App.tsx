@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ChevronsUpDown, LoaderCircle, RefreshCw, Sparkles } from 'lucide-react'
+import { ChevronsUpDown, LoaderCircle, RefreshCw, MessageCircle } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -415,15 +415,6 @@ export default function App() {
               </div>
             )}
 
-            <IconButton
-              label={assistantOpen ? 'Close health assistant' : 'Open health assistant'}
-              className={cn('assistant-toggle', assistantOpen && 'is-active')}
-              aria-controls="health-assistant"
-              aria-expanded={assistantOpen}
-              onClick={() => setAssistantOpen((open) => !open)}
-            >
-              <Sparkles />
-            </IconButton>
             {status.connected ? (
               <>
                 {syncing && (
@@ -479,6 +470,18 @@ export default function App() {
           ) : currentView}
         </div>
       </SidebarInset>
+
+      {!assistantOpen && (
+        <IconButton
+          label="Open health assistant"
+          className="assistant-launcher"
+          aria-controls="health-assistant"
+          aria-expanded={assistantOpen}
+          onClick={() => setAssistantOpen(true)}
+        >
+          <MessageCircle aria-hidden="true" />
+        </IconButton>
+      )}
 
       <HealthAssistant
         open={assistantOpen}

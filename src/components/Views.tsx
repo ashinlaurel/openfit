@@ -461,7 +461,7 @@ export function TodayView({ data, navigate }: ViewProps) {
                     <PanelHeader title="Sleep" icon={SleepIcon} action={<ChevronRightIcon aria-hidden="true" />} />
                     <div className="sleep-overview-lead">
                       <div className="sleep-overview-duration"><strong>{sleepPrimaryValue}</strong>{(data.sleep.startTime || data.sleep.endTime) && <span>{formatTime(data.sleep.startTime)} – {formatTime(data.sleep.endTime)}</span>}<small>{sleepGoalNote}</small></div>
-                      {(hasValue(data.sleep.score) || hasValue(data.sleep.efficiency)) && <RadialProgress value={data.sleep.score ?? data.sleep.efficiency} color="var(--category-sleep)" label={hasValue(data.sleep.score) ? sleepScoreCategory(data.sleep.score) : 'efficiency'} valueLabel={formatNumber(data.sleep.score ?? data.sleep.efficiency)} size={68} />}
+                      {(hasValue(data.sleep.score) || hasValue(data.sleep.efficiency)) && <RadialProgress value={data.sleep.score ?? data.sleep.efficiency} color="var(--category-sleep)" label={hasValue(data.sleep.score) ? sleepScoreCategory(data.sleep.score) : 'efficiency'} valueLabel={hasValue(data.sleep.score) ? formatNumber(data.sleep.score) : `${formatNumber(data.sleep.efficiency)}%`} size={80} />}
                     </div>
                     {data.sleep.stages.some((stage) => stage.minutes > 0) && <SleepStageBar stages={data.sleep.stages} compact showLegend={false} />}
                   </Panel>

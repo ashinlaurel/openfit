@@ -932,11 +932,9 @@ input:focus-visible,
 
 .battery-percent { color: var(--foreground); }
 
-.refresh-button,
-.assistant-toggle { color: var(--muted-foreground); }
+.refresh-button { color: var(--muted-foreground); }
 
-.refresh-button svg,
-.assistant-toggle svg {
+.refresh-button svg {
   width: 16px;
   height: 16px;
   stroke-width: 1.7;
@@ -1332,11 +1330,29 @@ input:focus-visible,
 
 .assistant-open .main-area { margin-right: 388px; }
 
-.assistant-toggle.is-active {
-  color: var(--foreground) !important;
-  background: var(--accent) !important;
-  box-shadow: inset 0 0 0 1px var(--border);
+.assistant-launcher {
+  position: fixed;
+  z-index: 45;
+  right: max(24px, env(safe-area-inset-right));
+  bottom: max(24px, env(safe-area-inset-bottom));
+  width: 56px;
+  height: 56px;
+  border: 1px solid color-mix(in srgb, var(--primary) 75%, var(--foreground));
+  border-radius: 50%;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.25);
+  transition: transform 160ms ease, box-shadow 160ms ease;
 }
+
+.assistant-launcher:hover {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 32px rgb(0 0 0 / 0.3);
+}
+
+.assistant-launcher svg { width: 24px; height: 24px; }
 
 .health-assistant {
   position: fixed;
@@ -1691,6 +1707,7 @@ input:focus-visible,
 
 @media (prefers-reduced-motion: reduce) {
   .health-assistant,
+  .assistant-launcher,
   .main-area { transition: none; }
 }
 
@@ -3124,4 +3141,62 @@ input:focus-visible,
   .sleep-timeline-card { padding-inline: 14px; }
   .sleep-timeline-label,
   .sleep-timeline-time { font-size: 11px; }
+}
+
+/* Keep sleep quality labels outside the compact ring so they never clip. */
+.home-sleep-overview .radial-progress { margin-bottom: 22px; }
+.home-sleep-overview .radial-progress > span { position: static; }
+.home-sleep-overview .radial-progress small {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  max-width: none;
+  overflow: visible;
+  transform: translateX(-50%);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* One-shot chart entrances replay when the page's keyed content mounts.
+   CSS-only: no animation timers, extra renders, or persistent compositor hints. */
+@media (prefers-reduced-motion: no-preference) {
+  .line-chart > svg,
+  .sleep-timeline-chart > svg {
+    animation: chart-reveal 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .chart-column-mark {
+    transform-box: fill-box;
+    transform-origin: center bottom;
+    animation: chart-bar-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .radial-value {
+    animation: chart-ring-enter 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .bullet-value,
+  .sleep-stage-bar {
+    transform-origin: left center;
+    animation: chart-track-enter 440ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+
+@keyframes chart-reveal {
+  from { clip-path: inset(0 100% 0 0); opacity: 0.35; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
+}
+
+@keyframes chart-bar-enter {
+  from { transform: scaleY(0.02); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes chart-ring-enter {
+  from { stroke-dashoffset: 263.894; }
+}
+
+@keyframes chart-track-enter {
+  from { transform: scaleX(0.02); }
+  to { transform: scaleX(1); }
 }
