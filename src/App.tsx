@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ChevronsUpDown, LoaderCircle, RefreshCw, MessageCircle } from 'lucide-react'
+import { ChevronsUpDown, LoaderCircle, RefreshCw, MessageCircle, Search, ListTodo, Flame, BookOpen, Rss, Bookmark, FileHeart, FileUp, Wine } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,7 +35,18 @@ import { createDemoData, localIso } from '@/data/demo'
 import { normalizeFitbitData } from '@/data/normalize'
 import { formatDate, relativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { ActivityView, BodyView, DevicesView, HealthView, SleepView, TodayView } from '@/components/Views'
+import { ActivityView, MovementView, BodyView, DevicesView, HealthView, SleepView, TodayView } from '@/components/Views'
+import { HabitsView } from '@/components/HabitsView'
+import { useHabits } from '@/lib/use-habits'
+import { TodosView } from '@/components/TodosView'
+import { useTodos } from '@/lib/use-todos'
+import { ReaderView } from '@/components/ReaderView'
+import { useReader } from '@/lib/use-reader'
+import { DrinkingView } from '@/components/DrinkingView'
+import { ReportsView } from '@/components/ReportsView'
+import { useReports } from '@/lib/use-reports'
+import type { TodoAction } from '@/types'
+import { CommandPalette, type PaletteCommand } from '@/components/CommandPalette'
 import { HealthAssistant } from '@/components/HealthAssistant'
 import type { AssistantNavigation } from '@/lib/health-assistant'
 import type { AppIcon } from '@/components/icons'
@@ -62,14 +73,20 @@ import {
   TodayIcon,
 } from '@/components/icons'
 
-type NavCategory = 'summary' | 'activity' | 'heart' | 'sleep' | 'body' | 'device'
+type NavCategory = 'utility' | 'summary' | 'activity' | 'heart' | 'sleep' | 'body' | 'device'
 
 const navItems: Array<{ id: PageId; label: string; copy: string; icon: AppIcon; category: NavCategory }> = [
   { id: 'today', label: 'Today', copy: 'The day’s essential overview.', icon: TodayIcon, category: 'summary' },
-  { id: 'activity', label: 'Activity', copy: 'Goals, hourly distribution, and workouts.', icon: ActivityIcon, category: 'activity' },
+  { id: 'movement', label: 'Movement', copy: 'Steps, daily movement, and your workday rhythm.', icon: StepsIcon, category: 'activity' },
+  { id: 'activity', label: 'Activity', copy: 'Workout sessions, training time, and exercise details.', icon: ActivityIcon, category: 'activity' },
   { id: 'health', label: 'Health', copy: 'Cardiac and physiological signals over time.', icon: HeartIcon, category: 'heart' },
   { id: 'sleep', label: 'Sleep', copy: 'Duration, quality, and composition of your latest night’s sleep.', icon: SleepIcon, category: 'sleep' },
   { id: 'body', label: 'Body', copy: 'Weight, composition, and daily balance.', icon: BodyIcon, category: 'body' },
+  { id: 'drinking', label: 'Drinking', copy: 'Your drinking pattern, alcohol-free days, and reduction goals.', icon: Wine, category: 'body' },
+  { id: 'habits', label: 'Habits', copy: 'Small steps. A rhythm that feels like yours.', icon: Flame, category: 'utility' },
+  { id: 'todos', label: 'Todos', copy: 'Tasks, plans, and a little room to think.', icon: ListTodo, category: 'utility' },
+  { id: 'reports', label: 'Reports', copy: 'Medical reports, latest results, and your history over time.', icon: FileHeart, category: 'utility' },
+  { id: 'reader', label: 'Reader', copy: 'Saved articles, favourite feeds, and room to read.', icon: BookOpen, category: 'utility' },
   { id: 'devices', label: 'Data', copy: 'Sources, coverage, and local protection.', icon: DeviceIcon, category: 'device' },
 ]
 
@@ -112,12 +129,33 @@ function IconButton({ label, children, ...props }: { label: string; children: Re
 }
 
 export default function App() {
+  const reports = useReports()
+  const [reportUpload, setReportUpload] = useState(0)
+  const reader = useReader()
+  const [readerRequest, setReaderRequest] = useState<{kind:'save'|'subscribe'|'search';serial:number}>({kind:'save',serial:0})
+  const habits = useHabits()
+  const [habitCreate, setHabitCreate] = useState(0)
+  const todos = useTodos()
+  const [todoFocus, setTodoFocus] = useState(0)
+  const [proposals, setProposals] = useState<TodoAction[]>([])
   const [page, setPage] = useState<PageId>('today')
   const [selectedDate, setSelectedDate] = useState(localIso())
   const [data, setData] = useState<DashboardData>(() => createDemoData())
   const [status, setStatus] = useState(defaultStatus)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        if (!event.repeat) setPaletteOpen(open => !open)
+      }
+    }
+    window.addEventListener('keydown', handleShortcut, true)
+    return () => window.removeEventListener('keydown', handleShortcut, true)
+  }, [])
   const [syncing, setSyncing] = useState(false)
   const [syncTargetDate, setSyncTargetDate] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
@@ -331,13 +369,19 @@ export default function App() {
 
   const currentView = useMemo(() => {
     const props = { data, status, navigate: setPage }
+    if (page === 'drinking') return <DrinkingView />
+    if (page === 'reports') return <ReportsView reports={reports} uploadRequest={reportUpload} />
+    if (page === 'reader') return <ReaderView reader={reader} request={readerRequest} />
+    if (page === 'habits') return <HabitsView habits={habits} createRequest={habitCreate} />
+    if (page === 'todos') return <TodosView todos={todos} focusRequest={todoFocus} onAssistant={() => setAssistantOpen(true)} />
+    if (page === 'movement') return <MovementView {...props} />
     if (page === 'activity') return <ActivityView {...props} />
     if (page === 'health') return <HealthView {...props} />
     if (page === 'sleep') return <SleepView {...props} />
     if (page === 'body') return <BodyView {...props} />
     if (page === 'devices') return <DevicesView {...props} />
     return <TodayView {...props} />
-  }, [data, page, status])
+  }, [data, page, status, todos, todoFocus, habits, habitCreate, reader, readerRequest, reports, reportUpload])
 
   const isToday = selectedDate === localIso()
   const sourceLabel = status.connected
@@ -365,8 +409,32 @@ export default function App() {
     if (navigation.page) setPage(navigation.page)
   }
 
+  const commands: PaletteCommand[] = [
+    { id:'upload-report', label:'Upload a medical report PDF', description:'Extract and review laboratory results locally.', keywords:'reports blood labs medical pdf tests', icon:<FileUp/>, disabled:reports.busy, run:()=>{setPage('reports');setReportUpload(value=>value+1)} },
+    ...(['save', 'subscribe', 'search'] as const).map(kind => ({ id:`reader-${kind}`, label:kind === 'save' ? 'Save an article' : kind === 'subscribe' ? 'Subscribe to an RSS feed' : 'Search your reading library', description:'Open Reader · saved articles and publications.', keywords:'reader read news bookmark rss atom feeds articles', icon:kind === 'subscribe' ? <Rss/> : <Bookmark/>, run:() => { setPage('reader'); setReaderRequest(value => ({kind,serial:value.serial+1})) } })),
+    { id: 'refresh-reader', label: 'Refresh RSS feeds', description:'Fetch headlines from your Reader subscriptions.', keywords:'reader news articles sync', icon:<RefreshCw/>, disabled:reader.busy || !reader.store.feeds.length, run:() => { setPage('reader'); void reader.perform({type:'refresh'}) } },
+    { id: 'new-habit', label: 'Create a habit', description: 'Start a new ritual with a flexible schedule.', keywords: 'streak routine tracker', icon: <Flame />, run: () => { setPage('habits'); setHabitCreate(n => n + 1) } },
+    { id: 'export-habits', label: 'Export habit history', description: 'Save an unencrypted JSON copy of your rituals and check-ins.', icon: <ExportIcon />, disabled: !window.habits || habits.busy, run: () => { void habits.perform('export') } },
+    { id: 'search-tasks', label: 'Search tasks', description: 'Find tasks by title, notes, or tags.', keywords: 'todo find', icon: <Search />, run: () => { setPage('todos'); setTodoFocus(v => -(Math.abs(v) + 1)) } },
+    { id: 'export-tasks', label: 'Export tasks as JSON', description: 'Save an unencrypted portable copy of tasks and history.', icon: <ExportIcon />, disabled: !window.todos || todos.busy, run: () => { void todos.perform('export') } },
+    { id: 'new-task', label: 'Add a task', description: 'Open Todos and focus quick entry.', keywords: 'todo new create', icon: <ListTodo />, run: () => { setPage('todos'); setTodoFocus(v => Math.abs(v) + 1) } },
+    { id: 'plan-tasks', label: 'Plan tasks with Codex', description: 'Open the task assistant.', keywords: 'todo prioritize', icon: <MessageCircle />, run: () => { setPage('todos'); setAssistantOpen(true) } },
+    ...navItems.map(item => ({
+      id: `page-${item.id}`, label: `Go to ${item.label}`, description: item.copy,
+      keywords: item.id === 'movement' ? 'steps walking sedentary desk workday inactivity distance' : item.id === 'activity' ? 'workout exercise training sessions' : item.id === 'devices' ? 'devices sources coverage' : item.id === 'health' ? 'heart hrv recovery' : '',
+      icon: <item.icon />, run: () => setPage(item.id),
+    })),
+    { id: 'assistant', label: 'Open health assistant', description: 'Ask questions about your health data.', keywords: 'chat ai', icon: <MessageCircle />, run: () => setAssistantOpen(true) },
+    { id: 'settings', label: 'Open settings', description: 'Manage your connection and preferences.', icon: <SettingsIcon />, run: () => setSettingsOpen(true) },
+    { id: 'today', label: 'Jump to today', description: 'Show the latest day.', icon: <CalendarIcon />, run: () => changeDate(localIso()) },
+    { id: 'previous', label: 'Previous day', description: 'View the day before the selected date.', icon: <ChevronLeftIcon />, run: () => changeDate(shiftDate(selectedDate, -1)) },
+    { id: 'next', label: 'Next day', description: isToday ? 'Already viewing today.' : 'View the next day.', disabled: isToday, icon: <ChevronRightIcon />, run: () => changeDate(shiftDate(selectedDate, 1)) },
+    { id: 'sync', label: 'Sync health data', description: syncing ? 'Sync is already in progress.' : status.connected ? 'Refresh data from your connected provider.' : 'Connect a provider in Settings first.', keywords: 'refresh', disabled: syncing || !status.connected, icon: <RefreshCw />, run: () => { void runSync() } },
+    { id: 'export', label: 'Export health data', description: window.fitbit ? 'Save your local data as JSON.' : 'Available in the desktop app.', disabled: !window.fitbit, icon: <ExportIcon />, run: () => { void exportData() } },
+  ]
+
   return (
-    <SidebarProvider className={cn('app-shell', assistantOpen && 'assistant-open')}>
+    <SidebarProvider className={cn('app-shell', assistantOpen && page !== 'reports' && page !== 'drinking' && 'assistant-open')}>
       <div className="window-drag-region" />
       <OpenFitSidebar
         items={visibleNav}
@@ -396,6 +464,8 @@ export default function App() {
           </div>
 
           <div className="topbar-actions">
+            <IconButton label="Search commands (⌘P / Ctrl+P)" onClick={() => setPaletteOpen(true)}><Search /></IconButton>
+            {page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && <>
             <div className="date-control">
               <IconButton label="Previous day" onClick={() => changeDate(shiftDate(selectedDate, -1))}><ChevronLeftIcon /></IconButton>
               <label className="date-picker">
@@ -436,11 +506,12 @@ export default function App() {
                 {connecting ? <LoaderIcon className="spin" /> : <CloudIcon />}<span>Connect</span>
               </Button>
             )}
+            </>}
           </div>
         </header>
 
-        <div className="page-content" key={page} aria-busy={loadingSelectedDate}>
-          {loadingSelectedDate ? (
+        <div className="page-content" key={page} aria-busy={loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking'}>
+          {loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' ? (
             <div className="date-loading" role="status" aria-live="polite">
               <LoaderCircle className="spin" aria-hidden="true" />
               <div>
@@ -471,9 +542,9 @@ export default function App() {
         </div>
       </SidebarInset>
 
-      {!assistantOpen && (
+      {!assistantOpen && page !== 'reports' && page !== 'drinking' && (
         <IconButton
-          label="Open health assistant"
+          label={page === 'todos' ? 'Open task assistant' : page === 'habits' ? 'Open habit assistant' : 'Open health assistant'}
           className="assistant-launcher"
           aria-controls="health-assistant"
           aria-expanded={assistantOpen}
@@ -484,12 +555,25 @@ export default function App() {
       )}
 
       <HealthAssistant
-        open={assistantOpen}
+        key={page === 'todos' ? 'tasks' : page === 'habits' ? 'habits' : 'health'}
+        onProposals={setProposals}
+        open={assistantOpen && page !== 'reports' && page !== 'drinking'}
         data={data}
         page={page}
         onOpenChange={setAssistantOpen}
         onNavigate={navigateFromAssistant}
       />
+
+      <Dialog open={proposals.length > 0} onOpenChange={open => { if (!open) setProposals([]) }}>
+        <DialogContent className="todo-dialog"><DialogTitle>Review proposed task changes</DialogTitle><DialogDescription>Nothing changes until you apply. Review every action below.</DialogDescription>
+          <div className="todo-proposals">{proposals.map((action, index) => <div key={index}><strong>{action.type}: {action.task?.title || todos.store.tasks.find(t => t.id === action.id)?.title || 'Unknown task'}</strong><pre>{JSON.stringify(action.task || { id: action.id }, null, 2)}</pre></div>)}</div>
+          {todos.error && <p role="alert">{todos.error}</p>}
+          <Button disabled={todos.busy} onClick={async () => { if (await todos.perform(proposals)) setProposals([]) }}>Apply {proposals.length} changes</Button>
+          <Button variant="outline" onClick={() => setProposals([])}>Discard</Button>
+        </DialogContent>
+      </Dialog>
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} commands={commands} />
 
       <SettingsDialog
         open={settingsOpen}
@@ -537,7 +621,7 @@ function OpenFitSidebar({
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join('') || 'PB'
-  const wellbeingItems = items.filter((item) => item.id !== 'devices')
+  const wellbeingItems = items.filter((item) => item.category !== 'utility' && item.id !== 'devices')
   const dataItem = items.find((item) => item.id === 'devices')
 
   const selectPage = (nextPage: PageId) => {
@@ -589,6 +673,11 @@ function OpenFitSidebar({
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Utility</SidebarGroupLabel>
+          <SidebarGroupContent><SidebarMenu>{items.filter(item => item.category === 'utility').sort((a, b) => Number(b.id === 'todos') - Number(a.id === 'todos')).map(item => <SidebarMenuItem key={item.id}><SidebarMenuButton isActive={page === item.id} aria-current={page === item.id ? 'page' : undefined} tooltip={item.label} onClick={() => selectPage(item.id)}><item.icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>)}</SidebarMenu></SidebarGroupContent>
         </SidebarGroup>
 
         <SidebarGroup>

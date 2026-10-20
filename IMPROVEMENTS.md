@@ -6,7 +6,7 @@ Make OpenFit a personal health workstation with fast navigation, deeper comparis
 
 ### 1. Command Palette
 
-- Open with `⌘K` on macOS or `Ctrl+K` on Windows and Linux.
+- Open with `⌘P` on macOS or `Ctrl+P` on Windows and Linux.
 - Jump to a date, switch views, compare weeks, export data, or ask the assistant.
 - Provide keyboard shortcuts for common actions.
 
