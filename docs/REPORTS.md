@@ -1,0 +1,17 @@
+# Medical reports
+
+Reports lives under Utility and in the command palette. Upload a PDF (up to 20 MB / 40 pages), confirm its medical date, review extracted fields beside the source page, and save. Dates are editable; ambiguous numeric dates require selection. Values, units, printed references and source page numbers are retained. Unrecognised tests can be added manually.
+
+PDF.js reads selectable text locally in a worker thread. Image-only pages use bundled English Tesseract OCR locally, without downloading language files. OCR and undecodable symbols are marked for review. Layout recognition supports three-column tables with units below references and four-column tables with separate units, wrapped names and vertically centred values. Reference continuation lines are retained, while explanatory sections and footers are excluded; specimen context persists across continuation pages. Layout recognition targets laboratory tables; other laboratory layouts may need manual corrections or optional Codex extraction. OCR is transcription assistance, not a guarantee of accuracy.
+
+Codex extraction is an explicit, separate action. It sends extracted PDF text to the configured Codex service; the UI discloses this before invocation. Suggestions must contain source evidence matching a page and result value, and require review. Reports are excluded from automatic health-assistant context.
+
+Latest values use the report date, not upload order. Clicking a marker opens all prior measurements and source pages. Exact numeric values form trends after a second report; qualitative and qualified results retain their original text. Different units have separate histories, without automatic conversions. Each marker and unit keeps its first reviewed, nonempty, unambiguous reference as a default in the encrypted index. Existing archives migrate by upload order, not medical date. Later imports reuse that default; a first range is added only for new markers/units or previously missing ranges. Original per-report reference text is retained separately for source history. Archiving a report does not erase its established defaults.
+
+Trend charts shade the saved numeric interval in green and label its boundaries, including one-sided bounds and single-point histories. Explicitly labelled Normal or Sufficient subranges can be shaded from categorical references; unparseable and qualitative references are not guessed. Other charts do not receive a band unless explicitly supplied.
+
+The index and original PDF copies are encrypted using Electron safeStorage in the local app-data directory (`reports.secure.json`, `medical-pdfs/`). A previous index supports recovery. Reimporting the same PDF runs fresh extraction for review and updates its existing record on save rather than duplicating trend points. Review/edit preserves the saved fields until explicitly changed. Archiving is reversible. JSON export is explicitly unencrypted. These files are local to this installation and are not a cloud backup.
+
+Personal PDFs are excluded from Git at the repository root. No personal values or PDFs are included in source or test fixtures. The supplied initial report was imported through the application's review flow into private app data.
+
+Validation: synthetic parser/archive/history tests cover qualified and qualitative values, ambiguous dates, missing glyphs, strict reference bounds, duplicate imports, review confirmation, unit separation, archive restore, and AI evidence checking. The provided selectable PDF and page previews were also checked locally.

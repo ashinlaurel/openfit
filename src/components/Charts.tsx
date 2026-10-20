@@ -17,6 +17,7 @@ interface BaseChartProps {
   targetLabel?: string
   ariaLabel?: string
   variant?: 'line' | 'area'
+  referenceBand?: { low: number | null; high: number | null }
   showRangeLabels?: boolean
 }
 
@@ -125,6 +126,7 @@ export function LineChart({
   ariaLabel = 'Trend over time',
   variant = 'line',
   showRangeLabels = false,
+  referenceBand,
 }: BaseChartProps) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const areaId = useId().replace(/:/g, '')
@@ -137,7 +139,8 @@ export function LineChart({
     : { top: 18, right: 14, bottom: 30, left: 48 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
-  const domain = lineDomain(valid, target)
+  const band=referenceBand&&(referenceBand.low!==null||referenceBand.high!==null)&&[referenceBand.low,referenceBand.high].every(value=>value===null||Number.isFinite(value))&&(referenceBand.low===null||referenceBand.high===null||referenceBand.low<=referenceBand.high)?referenceBand:undefined
+  const domain = lineDomain([...valid,...(band?[band.low,band.high].filter((value):value is number=>value!==null):[])], target)
   const validX = xValues?.length === values.length && xValues.every(Number.isFinite) ? xValues : values.map((_, index) => index)
   const xMin = Math.min(...validX)
   const xMax = Math.max(...validX)
@@ -214,7 +217,8 @@ export function LineChart({
         onKeyDown={handleKeyDown}
       >
         <title>{ariaLabel}</title>
-        <desc>{chartSummary(valid, formatter)}</desc>
+        <desc>{chartSummary(valid, formatter)}{band?' Shaded green area shows the saved reference interval.':''}</desc>
+        {band&&<g aria-label="Saved reference interval"><rect x={margin.left} y={yFor(band.high??domain.max)} width={plotWidth} height={Math.max(0,yFor(band.low??domain.min)-yFor(band.high??domain.max))} fill="#9cbfae" fillOpacity={0.14}/>{[band.low,band.high].map((bound,index)=>bound!==null&&<g key={index}><line x1={margin.left} x2={width-margin.right} y1={yFor(bound)} y2={yFor(bound)} stroke="#9cbfae" strokeOpacity={0.65} strokeDasharray="4 4"/><text x={width-margin.right-4} y={Math.max(margin.top+10,yFor(bound)-5)} textAnchor="end" fill="#9cbfae" fontSize={9}>{formatter(bound)}</text></g>)}</g>}
         {variant === 'area' && segments.map((segment, index) => (
           <path
             key={`area-${areaId}-${index}`}
@@ -242,7 +246,7 @@ export function LineChart({
         {segments.map((segment, index) => (
           <path key={index} d={segment.line} fill="none" stroke={color} strokeWidth={compact ? 2.4 : 2.6} strokeLinecap="round" strokeLinejoin="round" />
         ))}
-        {!compact && values.length <= 20 && values.map((value, index) => value !== null && Number.isFinite(value) ? (
+        {(!compact || band) && values.length <= 20 && values.map((value, index) => value !== null && Number.isFinite(value) ? (
           <circle key={index} cx={xFor(index)} cy={yFor(value)} r={index === lastValidIndex ? 4 : 2.8} fill="var(--card)" stroke={color} strokeWidth="2">
             <title>{`${labels[index] ?? `Point ${index + 1}`}: ${formatter(value)}`}</title>
           </circle>
