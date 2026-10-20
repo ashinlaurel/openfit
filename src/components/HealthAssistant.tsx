@@ -1,3 +1,5 @@
+import { parseTodoProposals } from '@/lib/todo-assistant'
+import type { TodoAction } from '@/types'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AssistantRuntimeProvider,
@@ -85,16 +87,21 @@ export function HealthAssistant({
   page,
   onOpenChange,
   onNavigate,
+  onProposals,
 }: {
   open: boolean
   data: DashboardData
   page: PageId
   onOpenChange: (open: boolean) => void
+  onProposals?: (actions: TodoAction[]) => void
   onNavigate: (navigation: AssistantNavigation) => void
 }) {
   const dataRef = useRef(data)
   const pageRef = useRef(page)
   const navigateRef = useRef(onNavigate)
+  const proposalRef = useRef(onProposals)
+  useEffect(() => { proposalRef.current = onProposals }, [onProposals])
+  useEffect(() => { void window.healthAssistant?.reset().catch(() => undefined) }, [])
   const [status, setStatus] = useState(unavailableStatus)
 
   useEffect(() => { dataRef.current = data }, [data])
@@ -130,7 +137,7 @@ export function HealthAssistant({
       if (!prompt) throw new Error('Write a question before sending it.')
 
       let archived: DashboardData[] = []
-      if (window.fitbit && dataRef.current.source !== 'demo') {
+      if (pageRef.current !== 'todos' && pageRef.current !== 'habits' && window.fitbit && dataRef.current.source !== 'demo') {
         try {
           archived = archiveData(await window.fitbit.getCachedArchive())
         } catch {
@@ -138,7 +145,7 @@ export function HealthAssistant({
         }
       }
 
-      const healthContext = buildHealthAssistantContext(dataRef.current, archived, pageRef.current)
+      const healthContext = pageRef.current === 'todos' || pageRef.current === 'habits' ? JSON.stringify({ scope: pageRef.current }) : buildHealthAssistantContext(dataRef.current, archived, pageRef.current)
       const requestId = crypto.randomUUID()
       const queue = createQueue()
       let fullText = ''
@@ -152,7 +159,7 @@ export function HealthAssistant({
       abortSignal.addEventListener('abort', onAbort, { once: true })
 
       try {
-        await bridge.startTurn({ requestId, message: prompt, healthContext })
+        await bridge.startTurn({ requestId, message: prompt, healthContext, scope: pageRef.current === 'todos' ? 'todos' : pageRef.current === 'habits' ? 'habits' : 'health' })
         void refreshStatus()
 
         while (!completed) {
@@ -174,6 +181,10 @@ export function HealthAssistant({
           }
         }
 
+        if (pageRef.current === 'todos') {
+          const actions = parseTodoProposals(fullText)
+          if (actions.length) proposalRef.current?.(actions)
+        }
         const navigation = parseAssistantNavigation(fullText)
         const finalText = stripAssistantNavigation(fullText)
         if (navigation) navigateRef.current(navigation)
@@ -198,29 +209,36 @@ export function HealthAssistant({
       <aside
         id="health-assistant"
         className={`health-assistant ${open ? 'is-open' : ''}`}
-        aria-label="Health assistant"
+        aria-label={page === 'todos' ? 'Task assistant' : page === 'habits' ? 'Habit assistant' : 'Health assistant'}
         aria-hidden={!open}
         inert={!open}
       >
         <AssistantHeader
+          habitMode={page === 'habits'}
+          taskMode={page === 'todos'}
           status={status}
           ready={ready}
           onClose={() => onOpenChange(false)}
           onStatusRefresh={refreshStatus}
         />
-        <AssistantThread ready={ready} />
+        <AssistantThread ready={ready} habitMode={page === 'habits'}
+          taskMode={page === 'todos'} />
       </aside>
-      {open && <button className="assistant-scrim" aria-label="Close health assistant" onClick={() => onOpenChange(false)} />}
+      {open && <button className="assistant-scrim" aria-label={page === 'todos' ? 'Close task assistant' : page === 'habits' ? 'Close habit assistant' : 'Close health assistant'} onClick={() => onOpenChange(false)} />}
     </AssistantRuntimeProvider>
   )
 }
 
 function AssistantHeader({
+  habitMode,
+  taskMode,
   status,
   ready,
   onClose,
   onStatusRefresh,
 }: {
+  habitMode: boolean
+  taskMode: boolean
   status: HealthAssistantStatus
   ready: boolean
   onClose: () => void
@@ -240,7 +258,7 @@ function AssistantHeader({
       <div className="assistant-title">
         <span className="assistant-mark"><Sparkles aria-hidden="true" /></span>
         <span>
-          <strong>Health assistant</strong>
+          <strong>{taskMode ? 'Task assistant' : habitMode ? 'Habit assistant' : 'Health assistant'}</strong>
           <small><i className={ready ? 'is-ready' : ''} />{statusLabel(status, Boolean(window.healthAssistant))}</small>
         </span>
       </div>
@@ -256,18 +274,19 @@ function AssistantHeader({
   )
 }
 
-function AssistantThread({ ready }: { ready: boolean }) {
+function AssistantThread({ ready, taskMode, habitMode }: { ready: boolean; taskMode: boolean; habitMode: boolean }) {
   return (
     <ThreadPrimitive.Root className="assistant-thread">
       <ThreadPrimitive.Viewport className="assistant-viewport">
         <AuiIf condition={(state) => state.thread.isEmpty}>
           <div className="assistant-welcome">
-            <h2>Ask your health data.</h2>
-            <p>I can compare days, explain trends, and take you to the relevant view.</p>
+            <h2>{taskMode ? 'Make a plan that works.' : habitMode ? 'Find your rhythm.' : 'Ask your health data.'}</h2>
+            <p>{taskMode ? 'Prioritize tasks, break work into steps, and review proposed changes before applying them.' : habitMode ? 'Reflect on your routines, explore your consistency, and make your next step a little easier.' : 'I can compare days, explain trends, and take you to the relevant view.'}</p>
             <div className="assistant-suggestions" aria-label="Suggested questions">
+              {habitMode ? <><ThreadPrimitive.Suggestion prompt="Reflect on my recorded habit check-ins and schedules. What patterns can you see?" send disabled={!ready}>Reflect on my rhythm</ThreadPrimitive.Suggestion><ThreadPrimitive.Suggestion prompt="Help me make my current habits easier to maintain, based on their schedules." send disabled={!ready}>Make it sustainable</ThreadPrimitive.Suggestion></> : taskMode ? <><ThreadPrimitive.Suggestion prompt="Help me prioritize my active tasks. Explain your reasoning." send disabled={!ready}>Prioritize my tasks</ThreadPrimitive.Suggestion><ThreadPrimitive.Suggestion prompt="Suggest a realistic plan for today from my tasks." send disabled={!ready}>Plan today</ThreadPrimitive.Suggestion><ThreadPrimitive.Suggestion prompt="Find tasks that could be broken into smaller steps. Propose additions for me to review." send disabled={!ready}>Break down tasks</ThreadPrimitive.Suggestion></> : <>
               <ThreadPrimitive.Suggestion prompt="How did I sleep last night?" send disabled={!ready}>How did I sleep?</ThreadPrimitive.Suggestion>
               <ThreadPrimitive.Suggestion prompt="Compare my activity over the last seven days." send disabled={!ready}>Compare this week</ThreadPrimitive.Suggestion>
-              <ThreadPrimitive.Suggestion prompt="Show me my heart health data." send disabled={!ready}>Open heart data</ThreadPrimitive.Suggestion>
+              <ThreadPrimitive.Suggestion prompt="Show me my heart health data." send disabled={!ready}>Open heart data</ThreadPrimitive.Suggestion></>}
             </div>
           </div>
         </AuiIf>
@@ -287,8 +306,8 @@ function AssistantThread({ ready }: { ready: boolean }) {
               className="assistant-composer-input"
               rows={1}
               disabled={!ready}
-              placeholder={ready ? 'Ask about your health…' : 'Connect Codex Desktop to chat'}
-              aria-label="Message health assistant"
+              placeholder={ready ? taskMode ? 'Ask about your tasks…' : habitMode ? 'Ask about your habits…' : 'Ask about your health…' : 'Connect Codex Desktop to chat'}
+              aria-label={taskMode ? 'Message task assistant' : habitMode ? 'Message habit assistant' : 'Message health assistant'}
             />
             <AuiIf condition={(state) => !state.thread.isRunning}>
               <ComposerPrimitive.Send className="assistant-send" disabled={!ready} aria-label="Send message">
@@ -301,7 +320,7 @@ function AssistantThread({ ready }: { ready: boolean }) {
               </ComposerPrimitive.Cancel>
             </AuiIf>
           </ComposerPrimitive.Root>
-          <p className="assistant-disclaimer">Health context, not medical advice.</p>
+          <p className="assistant-disclaimer">{taskMode ? 'Sending shares non-trashed tasks with Codex. Changes need your review.' : habitMode ? 'Sending shares habit history with Codex. Reflection only; no changes.' : 'Health context, not medical advice.'}</p>
         </ThreadPrimitive.ViewportFooter>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>
