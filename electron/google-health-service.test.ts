@@ -157,3 +157,46 @@ describe('Google Health adapter', () => {
     expect(endpoints.activity.summary.veryActiveMinutes).toBeNull()
   })
 })
+
+
+describe('sedentary interval translation', () => {
+  it('preserves provider timestamps and does not fabricate intervals from daily totals', () => {
+    const interval = { startTime: '2026-06-22T08:15:00Z', endTime: '2026-06-22T09:30:00Z' }
+    const result = __test.translateGoogleHealth({ sedentaryIntervalsRaw: { dataPoints: [
+      { sedentaryPeriod: { interval } }, { sedentaryPeriod: { interval: { startTime: interval.startTime } } },
+    ] } }, '2026-06-22')
+    expect(result.sedentaryIntervals.intervals).toEqual([interval])
+    expect(__test.translateGoogleHealth({}, '2026-06-22').sedentaryIntervals.intervals).toEqual([])
+  })
+})
+
+describe('Air workout detail translation',()=>{
+  it('retains optional lap, event, swim, timing and sample fields with correct units',()=>{
+    const endpoints=__test.translateGoogleHealth({
+      activitiesRaw:{dataPoints:[{name:'session-1',dataSource:{device:{displayName:'Google Fitbit Air'}},exercise:{
+        exerciseType:'SWIMMING_POOL',displayName:'Pool swim',interval:{startTime:'2026-06-22T23:30:00Z',endTime:'2026-06-23T00:10:00Z',startUtcOffset:'19800s'},activeDuration:'2100s',notes:'Easy effort.',
+        exerciseMetadata:{poolLengthMillimeters:'25000',hasGps:false},
+        metricsSummary:{distanceMillimeters:1000000,averageSpeedMillimetersPerSecond:1250,elevationGainMillimeters:0,totalSwimLengths:40,runVo2Max:45,heartRateZoneDurations:{moderateTime:'600s'}},
+        splits:[{startTime:'2026-06-22T23:30:00Z',endTime:'2026-06-22T23:40:00Z',activeDuration:'540s',splitType:'DISTANCE',metricsSummary:{distanceMillimeters:250000,averagePaceSecondsPerMeter:2.16,averageHeartRateBeatsPerMinute:'120'}}],
+        exerciseEvents:[{eventTime:'2026-06-22T23:40:00Z',exerciseEventType:'PAUSE'}],
+      }}]},
+      heartIntradayRaw:{dataPoints:[{heartRate:{sampleTime:{physicalTime:'2026-06-22T23:30:00Z'},beatsPerMinute:123}}]},
+    },'2026-06-23')
+    expect(endpoints.activities.activities[0]).toMatchObject({
+      exerciseType:'SWIMMING_POOL',localStartTime:'2026-06-23T05:00:00',activeDurationMinutes:35,elapsedDurationMinutes:40,
+      averageSpeedKmh:4.5,elevationGainMeters:0,swimLengths:40,poolLengthMeters:25,hasGps:false,sourceDevice:'Google Fitbit Air',
+      splits:[{activeMinutes:9,elapsedMinutes:10,distanceKm:.25,paceSecondsPerMeter:2.16,averageHeartRate:120}],
+      events:[{type:'PAUSE',time:'2026-06-22T23:40:00Z'}],heartZoneMinutes:{light:null,moderate:10,vigorous:null,peak:null},
+    })
+    expect(endpoints.heartIntraday['activities-heart-intraday'].dataset[0].timestamp).toBe('2026-06-22T23:30:00Z')
+    expect(endpoints.activities.coverage).toEqual({startDate:'2026-05-27',endDate:'2026-06-23'})
+  })
+  it('preserves zero duration, missing optional fields and does not double count both lap arrays',()=>{
+    const result=__test.translateGoogleHealth({activitiesRaw:{dataPoints:[{name:'zero',exercise:{activeDuration:'0s',interval:{startTime:'2026-06-22T09:00:00Z',endTime:'2026-06-22T10:00:00Z'},splits:[{metricsSummary:{caloriesKcal:10}}],splitSummaries:[{metricsSummary:{caloriesKcal:20}}]}},{name:'missing',exercise:{displayName:'Workout'}}]}},'2026-06-22')
+    expect(result.activities.activities[0].duration).toBe(0)
+    expect(result.activities.activities[0].splits).toHaveLength(1)
+    expect(result.activities.activities[0].splits[0].calories).toBe(20)
+    expect(result.activities.activities[1]).toMatchObject({activeDurationMinutes:null,elapsedDurationMinutes:null,calories:null,runVo2Max:null,heartZoneMinutes:null,splits:[],events:[]})
+    expect(__test.translateGoogleHealth({},'2026-06-22').activities.coverage).toBeNull()
+  })
+})

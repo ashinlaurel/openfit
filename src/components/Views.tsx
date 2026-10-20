@@ -41,6 +41,9 @@ import {
   relativeTime,
 } from '@/lib/format'
 import { availableMetricCount, hasActivityData, hasBodyData, hasHealthData, hasSleepData } from '@/lib/data-availability'
+import { WorkdayMovement } from './WorkdayMovement'
+import { WeeklySleep } from './WeeklySleep'
+import { ResearchInsights } from './ResearchInsights'
 import { analyzeHome } from '@/lib/home-analysis'
 import type { BaselineComparison } from '@/lib/home-analysis'
 
@@ -168,9 +171,8 @@ function CompactActivity({ item, detailed = false }: { item: ActivityItem; detai
         {hasValue(item.averageHeartRate) && <span>{formatNumber(item.averageHeartRate)} bpm</span>}
         {detailed && hasValue(item.calories) && <span>{formatNumber(item.calories)} kcal</span>}
       </div>
-      {detailed && (hasValue(item.steps) || pace || zoneDetails.length > 0) && (
+      {detailed && (pace || zoneDetails.length > 0) && (
         <div className="activity-detail-row">
-          {hasValue(item.steps) && <span><strong>{formatNumber(item.steps)}</strong> steps</span>}
           {pace && <span><strong>{pace}</strong> average pace</span>}
           {zoneDetails.map((detail) => <span key={detail}>{detail}</span>)}
         </div>
@@ -424,7 +426,7 @@ export function TodayView({ data, navigate }: ViewProps) {
         <div className="home-dashboard">
           <HomeSection id="overview" title="Overview">
             <div className="daily-summary-grid">
-              <DailySummaryMetric category="activity" icon={StepsIcon} label="Movement" value={hasSteps ? formatNumber(steps) : '—'} note={hasSteps ? activityNote : 'Unavailable'} onClick={() => navigate('activity')} />
+              <DailySummaryMetric category="activity" icon={StepsIcon} label="Movement" value={hasSteps ? formatNumber(steps) : '—'} note={hasSteps ? activityNote : 'Unavailable'} onClick={() => navigate('movement')} />
               <DailySummaryMetric category="sleep" icon={SleepIcon} label="Sleep" value={hasSleep ? sleepPrimaryValue : '—'} note={hasSleep ? sleepNote : 'Unavailable'} onClick={() => navigate('sleep')} />
               <DailySummaryMetric category="heart" icon={HeartIcon} label="Resting heart rate" value={hasValue(data.health.restingHeartRate) ? `${formatNumber(data.health.restingHeartRate)} bpm` : '—'} note={hasValue(data.health.restingHeartRate) ? heartNote : 'Unavailable'} onClick={() => navigate('health')} />
             </div>
@@ -433,7 +435,7 @@ export function TodayView({ data, navigate }: ViewProps) {
           <HomeSection id="activity-recovery" title="Activity and recovery">
             <div className="home-core-grid">
             {hasSteps && (
-              <Panel className="home-movement-card" category="activity" onClick={() => navigate('activity')} ariaLabel="Open Activity">
+              <Panel className="home-movement-card" category="activity" onClick={() => navigate('movement')} ariaLabel="Open Movement">
                 <PanelHeader title="Movement" icon={StepsIcon} action={<ChevronRightIcon aria-hidden="true" />} />
                 <div className="home-card-lead">
                   <div><strong>{formatNumber(steps)}</strong><span>steps</span></div>
@@ -546,7 +548,7 @@ export function TodayView({ data, navigate }: ViewProps) {
   )
 }
 
-export function ActivityView({ data }: ViewProps) {
+export function MovementView({ data }: ViewProps) {
   const stepValues = data.trends.map((point) => point.steps)
   const validSteps = stepValues.filter(hasValue)
   const averageSteps = validSteps.length ? validSteps.reduce((sum, value) => sum + value, 0) / validSteps.length : null
@@ -570,7 +572,7 @@ export function ActivityView({ data }: ViewProps) {
   const hasActivityTrends = activityTrendValues.some((values) => values.filter(hasValue).length > 1)
 
   return (
-    <div className="page-stack activity-page">
+    <div className="page-stack movement-page">
       <div className="metric-grid activity-primary-metrics">
         <MetricTile label="Steps" value={data.activity.steps} goal={data.activity.stepsGoal} icon={StepsIcon} />
         <MetricTile label="Active minutes" value={data.activity.activeMinutes} goal={data.activity.activeMinutesGoal} unit=" min" icon={ActiveIcon} />
@@ -578,6 +580,8 @@ export function ActivityView({ data }: ViewProps) {
         <MetricTile label="Calories" value={data.activity.calories} goal={data.activity.caloriesGoal} unit=" kcal" icon={CaloriesIcon} />
       </div>
       <SupportingMetrics items={supporting} />
+      <WorkdayMovement data={data} />
+      <ResearchInsights data={data} kind="activity" />
 
       <div className="chart-grid activity-chart-grid">
         {data.activity.stepsIntraday.length > 0 && (
@@ -608,7 +612,7 @@ export function ActivityView({ data }: ViewProps) {
 
       {hasActivityTrends && (
         <section>
-          <SectionTitle title="Activity trends" copy="Daily series returned by Google Health." />
+          <SectionTitle title="Movement trends" copy="Daily series returned by Google Health." />
           <div className="metric-trend-grid">
             <MetricTrendPanel data={data} category="activity" icon={CaloriesIcon} title="Calories burned" values={data.trends.map((point) => point.calories)} formatter={(value) => `${formatNumber(value)} kcal`} />
             <MetricTrendPanel data={data} category="activity" icon={DistanceIcon} title="Distance" values={data.trends.map((point) => point.distanceKm)} formatter={(value) => `${formatDecimal(value)} km`} />
@@ -620,18 +624,12 @@ export function ActivityView({ data }: ViewProps) {
         </section>
       )}
 
-      <section>
-        <SectionTitle title="Workouts" copy={`${data.activities.length} activities in the synced period`} />
-        <Panel className="activity-panel full-list" category="activity">
-          {data.activities.map((item, index) => <div key={item.id}>{index > 0 && <Separator />}<CompactActivity item={item} detailed /></div>)}
-          {!data.activities.length && <EmptyValue>No workouts recorded during this period.</EmptyValue>}
-        </Panel>
-      </section>
-
       {!hasActivityData(data) && <EmptyValue>No movement data available for this day.</EmptyValue>}
     </div>
   )
 }
+
+export { ActivityView } from './ActivityView'
 
 export function HealthView({ data }: ViewProps) {
   const heartValues = data.health.heartRateIntraday.map((point) => point.value)
@@ -659,6 +657,7 @@ export function HealthView({ data }: ViewProps) {
 
   return (
     <div className="page-stack health-page">
+      <ResearchInsights data={data} kind="recovery" />
       {hasHeartSummary && (
         <Panel className="heart-detail-card" category="heart">
           <PanelHeader eyebrow="Day" title="Heart rate" icon={HeartIcon} />
@@ -742,6 +741,7 @@ export function SleepView({ data }: ViewProps) {
   const hasSummary = hasValue(data.sleep.totalMinutes) || hasValue(data.sleep.score)
   return (
     <div className="page-stack sleep-page">
+      <ResearchInsights data={data} kind="sleep" />
       {hasSummary && (
         <div className="sleep-layout">
           <Panel className="sleep-main-card" tone="violet" category="sleep">
@@ -821,6 +821,8 @@ export function SleepView({ data }: ViewProps) {
           </div>
         </section>
       )}
+
+      <WeeklySleep data={data} />
 
       {!hasSleepData(data) && <EmptyValue>No sleep data available for this day.</EmptyValue>}
     </div>

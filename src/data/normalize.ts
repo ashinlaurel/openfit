@@ -1,4 +1,5 @@
 import { createDemoData } from './demo'
+import { workoutClock } from '../lib/workouts'
 import type {
   ActivityItem,
   DashboardData,
@@ -153,21 +154,39 @@ function activityHeartZoneMinutes(item: Json): HeartZoneMinutes | null {
   return Object.values(values).some((value) => value !== null) ? values : null
 }
 
-function parseActivities(input: unknown): ActivityItem[] {
-  return asArray(asObject(input).activities).map((item, index) => ({
-    id: String(item.logId ?? `activity-${index}`),
-    name: String(item.activityName ?? item.name ?? 'Activity'),
-    date: String(item.startTime ?? item.originalStartTime ?? '').slice(0, 10),
-    time: String(item.startTime ?? item.originalStartTime ?? '').slice(11, 16),
-    durationMinutes: Math.round(Number(item.duration ?? item.activeDuration ?? 0) / 60_000),
-    calories: numeric(item.calories),
-    distanceKm: numeric(item.distance),
-    averageHeartRate: numeric(item.averageHeartRate),
-    zoneMinutes: firstNumber(item.activeZoneMinutes?.totalMinutes, item.activeZoneMinutes),
-    steps: numeric(item.steps),
-    averagePaceSecondsPerMeter: numeric(item.averagePaceSecondsPerMeter),
-    heartZoneMinutes: activityHeartZoneMinutes(item),
-  }))
+function parseActivities(input: unknown, timezone: string | null): ActivityItem[] {
+  const nonNegative = (value: unknown) => { const n = numeric(value); return n !== null && n >= 0 ? n : null }
+  return asArray(asObject(input).activities).map((item, index) => {
+    const startTime = String(item.startTime ?? item.originalStartTime ?? '')
+    const clock = workoutClock(String(item.localStartTime || startTime), timezone)
+    const extended = item.activeDurationMinutes !== undefined || item.elapsedDurationMinutes !== undefined
+    const duration = nonNegative(item.duration ?? item.activeDuration)
+    return {
+      id: String(item.logId ?? `activity-${clock.date}-${clock.time}-${index}`),
+      name: String(item.activityName ?? item.name ?? 'Activity'),
+      date: clock.date, time: clock.time,
+      startTime: startTime || null, endTime: typeof item.endTime === 'string' ? item.endTime : null,
+      exerciseType: typeof item.exerciseType === 'string' ? item.exerciseType : null,
+      durationMinutes: duration === null ? 0 : Math.round(duration / 60000),
+      ...(extended ? { activeDurationMinutes: nonNegative(item.activeDurationMinutes), elapsedDurationMinutes: nonNegative(item.elapsedDurationMinutes) } : {}),
+      calories: nonNegative(item.calories), distanceKm: nonNegative(item.distance),
+      averageHeartRate: nonNegative(item.averageHeartRate),
+      zoneMinutes: nonNegative(firstNumber(item.activeZoneMinutes?.totalMinutes, item.activeZoneMinutes)),
+      steps: nonNegative(item.steps), averagePaceSecondsPerMeter: nonNegative(item.averagePaceSecondsPerMeter),
+      averageSpeedKmh: nonNegative(item.averageSpeedKmh), elevationGainMeters: nonNegative(item.elevationGainMeters),
+      runVo2Max: nonNegative(item.runVo2Max), swimLengths: nonNegative(item.swimLengths), poolLengthMeters: nonNegative(item.poolLengthMeters),
+      hasGps: typeof item.hasGps === 'boolean' ? item.hasGps : null,
+      notes: typeof item.notes === 'string' ? item.notes : null, sourceDevice: typeof item.sourceDevice === 'string' ? item.sourceDevice : null,
+      heartZoneMinutes: activityHeartZoneMinutes(item),
+      splits: asArray(item.splits).map(split => ({
+        startTime: typeof split.startTime === 'string' ? split.startTime : null, endTime: typeof split.endTime === 'string' ? split.endTime : null,
+        activeMinutes: nonNegative(split.activeMinutes), elapsedMinutes: nonNegative(split.elapsedMinutes), distanceKm: nonNegative(split.distanceKm),
+        calories: nonNegative(split.calories), averageHeartRate: nonNegative(split.averageHeartRate), paceSecondsPerMeter: nonNegative(split.paceSecondsPerMeter),
+        type: typeof split.type === 'string' ? split.type : null,
+      })),
+      events: asArray(item.events).filter(event => typeof event.time === 'string' && Number.isFinite(Date.parse(event.time)) && typeof event.type === 'string').map(event => ({ time: event.time, type: event.type })),
+    }
+  })
 }
 
 export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
@@ -312,6 +331,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       activeMinutesGoal: numeric(goals?.activeMinutes),
       zoneMinutes: numeric(zoneMinutes),
       sedentaryMinutes: numeric(activity?.sedentaryMinutes),
+      sedentaryIntervals: asArray(asObject(e.sedentaryIntervals).intervals).filter(item => typeof item.startTime === 'string' && typeof item.endTime === 'string').map(item => ({ startTime: item.startTime, endTime: item.endTime })),
       stepsIntraday,
       caloriesIntraday: readIntraday(e.caloriesIntraday, 'activities-calories-intraday'),
     },
@@ -320,6 +340,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       restingHeartRate: numeric(heartSummary.restingHeartRate),
       heartRateMin: heartValues.length ? Math.min(...heartValues) : null,
       heartRateMax: heartValues.length ? Math.max(...heartValues) : null,
+      heartRateSamples: asArray(asObject(asObject(e.heartIntraday)['activities-heart-intraday']).dataset).filter(point => typeof point.timestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/i.test(point.timestamp) && Number.isFinite(Date.parse(point.timestamp)) && numeric(point.value) !== null && Number(point.value) > 0).map(point => ({ timestamp: point.timestamp, value: Number(point.value) })),
       heartRateIntraday: heartPoints,
       hrvMs: firstNumber(hrvValue.dailyRmssd, hrvValue.deepRmssd),
       hrvDeepSleepRmssdMs: numeric(hrvValue.deepRmssd),
@@ -373,7 +394,8 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       caloriesIn: numeric(foodSummary.calories),
     },
     trends,
-    activities: parseActivities(e.activities),
+    workoutCoverage: typeof e.activities?.coverage?.startDate === 'string' && typeof e.activities?.coverage?.endDate === 'string' ? e.activities.coverage : null,
+    activities: parseActivities(e.activities, profile.timezone ?? null),
     insights: buildInsights(activity, heartSummary, sleepRecord, goals),
     sync: {
       endpointCount: payload.requestStats?.total ?? Object.keys(e).length + payload.errors.length,

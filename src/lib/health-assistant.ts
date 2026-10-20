@@ -1,3 +1,4 @@
+import { workoutMinutes } from './workouts'
 import type { DashboardData, PageId, TrendPoint } from '@/types'
 
 export interface AssistantNavigation {
@@ -6,7 +7,7 @@ export interface AssistantNavigation {
 }
 
 const navigationPattern = /\s*<!--\s*openfit:navigate\s+(\{[\s\S]*?\})\s*-->\s*/g
-const validPages = new Set<PageId>(['today', 'activity', 'health', 'sleep', 'body', 'devices'])
+const validPages = new Set<PageId>(['today', 'movement', 'activity', 'health', 'sleep', 'body', 'devices', 'todos', 'habits', 'reader', 'reports', 'drinking'])
 
 function validIsoDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -73,6 +74,7 @@ function compactDay(data: DashboardData) {
       activeMinutesGoal: data.activity.activeMinutesGoal,
       zoneMinutes: data.activity.zoneMinutes,
       sedentaryMinutes: data.activity.sedentaryMinutes,
+      sedentaryIntervals: data.activity.sedentaryIntervals,
     },
     health: {
       currentHeartRateBpm: data.health.currentHeartRate,
@@ -126,7 +128,20 @@ function compactDay(data: DashboardData) {
       .map((activity) => withoutNulls({
         name: activity.name,
         time: activity.time,
-        durationMinutes: activity.durationMinutes,
+        durationMinutes: workoutMinutes(activity),
+        exerciseType: activity.exerciseType,
+        activeDurationMinutes: activity.activeDurationMinutes,
+        elapsedDurationMinutes: activity.elapsedDurationMinutes,
+        averageSpeedKmh: activity.averageSpeedKmh,
+        elevationGainMeters: activity.elevationGainMeters,
+        runVo2Max: activity.runVo2Max,
+        swimLengths: activity.swimLengths,
+        poolLengthMeters: activity.poolLengthMeters,
+        reportedSplitCount: activity.splits?.length,
+        splits: activity.splits?.slice(0, 20),
+        reportedEventCount: activity.events?.length,
+        events: activity.events?.slice(0, 20),
+        notes: activity.notes?.slice(0, 1000),
         calories: activity.calories,
         distanceKm: activity.distanceKm,
         averageHeartRateBpm: activity.averageHeartRate,
@@ -173,7 +188,7 @@ export function buildHealthAssistantContext(
     app: {
       currentPage: page,
       selectedDate: current.selectedDate,
-      navigablePages: ['today', 'activity', 'health', 'sleep', 'body', 'devices'],
+      navigablePages: ['today', 'movement', 'activity', 'health', 'sleep', 'body', 'devices', 'todos', 'habits', 'reader', 'reports'],
     },
     profile: {
       displayName: current.profile.displayName,
@@ -217,7 +232,7 @@ export function parseAssistantNavigation(text: string): AssistantNavigation | nu
 
 export function stripAssistantNavigation(text: string) {
   navigationPattern.lastIndex = 0
-  return text.replace(navigationPattern, '').trim()
+  return text.replace(navigationPattern, '').replace(/<!--\s*openfit:tasks[\s\S]*?-->/g, '').trim()
 }
 
 export function visibleAssistantText(text: string) {

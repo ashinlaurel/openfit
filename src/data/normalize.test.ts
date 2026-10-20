@@ -237,3 +237,18 @@ describe('normalizeFitbitData', () => {
     expect(result.trends[1]).toMatchObject({ hrvMs: 48, spo2: 97.2, breathingRate: 14.8, skinTemperature: 0.2 })
   })
 })
+
+describe('Workout normalization',()=>{
+  it('preserves local dates, exact duration, optional details and timestamped heart samples',()=>{
+    const payload:RawFitbitPayload={source:'google-health',date:'2026-06-23',generatedAt:'2026-06-23T10:00:00Z',errors:[],rateLimit:{limit:null,remaining:null,resetSeconds:null},endpoints:{
+      profile:{user:{timezone:'Asia/Kolkata'}},activities:{coverage:{startDate:'2026-05-27',endDate:'2026-06-23'},activities:[{
+        logId:'run',activityName:'Outdoor run',exerciseType:'RUNNING',startTime:'2026-06-22T23:30:00Z',endTime:'2026-06-23T00:10:00Z',duration:2100500,activeDurationMinutes:35.008333,elapsedDurationMinutes:40,
+        elevationGainMeters:0,averageSpeedKmh:10,runVo2Max:44.5,notes:'An easy run',splits:[{distanceKm:1,activeMinutes:6,paceSecondsPerMeter:.36}],events:[{time:'2026-06-23T00:00:00Z',type:'PAUSE'}],
+      }]},heartIntraday:{'activities-heart-intraday':{dataset:[{time:'05:00',timestamp:'2026-06-22T23:30:00Z',value:120},{time:'05:01',timestamp:'invalid',value:125},{time:'05:02',value:130}]}}
+    }}
+    const result=normalizeFitbitData(payload)
+    expect(result.activities[0]).toMatchObject({date:'2026-06-23',time:'05:00',activeDurationMinutes:35.008333,elapsedDurationMinutes:40,elevationGainMeters:0,exerciseType:'RUNNING',notes:'An easy run',splits:[{distanceKm:1,activeMinutes:6,paceSecondsPerMeter:.36,calories:null}]})
+    expect(result.health.heartRateSamples).toEqual([{timestamp:'2026-06-22T23:30:00Z',value:120}])
+    expect(result.workoutCoverage?.startDate).toBe('2026-05-27')
+  })
+})

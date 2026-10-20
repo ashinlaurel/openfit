@@ -242,6 +242,7 @@ async function syncGoogleHealthData(accessToken, selectedDate, onProgress = () =
     ['nutritionDaily', () => dailyRollup(accessToken, 'nutrition-log', trendStart, dayAfter)],
     ['coreTemperatureDaily', () => dailyRollup(accessToken, 'core-body-temperature', trendStart, dayAfter)],
     ['stepsIntradayRaw', () => listData(accessToken, 'steps', 'interval', selectedDate, dayAfter, 'google-wearables')],
+    ['sedentaryIntervalsRaw', () => listData(accessToken, 'sedentary-period', 'interval', trendStart, dayAfter, 'google-wearables')],
     ['heartIntradayRaw', () => listData(accessToken, 'heart-rate', 'sample', selectedDate, dayAfter, 'google-wearables')],
     ['restingHeartRaw', () => listData(accessToken, 'daily-resting-heart-rate', 'daily', trendStart, dayAfter)],
     ['hrvRaw', () => listData(accessToken, 'daily-heart-rate-variability', 'daily', trendStart, dayAfter)],
@@ -250,7 +251,7 @@ async function syncGoogleHealthData(accessToken, selectedDate, onProgress = () =
     ['skinTemperatureRaw', () => listData(accessToken, 'daily-sleep-temperature-derivations', 'daily', trendStart, dayAfter)],
     ['cardioRaw', () => listData(accessToken, 'daily-vo2-max', 'daily', trendStart, dayAfter)],
     ['sleepRaw', () => listData(accessToken, 'sleep', 'sleep', trendStart, dayAfter, 'google-wearables')],
-    ['activitiesRaw', () => listData(accessToken, 'exercise', 'session', trendStart, dayAfter)],
+    ['activitiesRaw', () => listData(accessToken, 'exercise', 'session', shiftIso(selectedDate, -27), dayAfter, 'google-wearables')],
     ['ecgRaw', () => listData(accessToken, 'electrocardiogram', 'ecg', ecgStart, dayAfter, 'all-sources', 'list')],
     ['irnProfileRaw', () => request('/users/me/irnProfile', accessToken)],
     ['irnAlertsRaw', () => listData(accessToken, 'irregular-rhythm-notification', 'session', trendStart, dayAfter, 'all-sources', 'list')],
@@ -471,7 +472,7 @@ function translateGoogleHealth(raw, selectedDate) {
   const heartPoints = dataPoints(raw.heartIntradayRaw).map((point) => {
     const record = point.heartRate || {}
     const time = timeFromCivil(record.sampleTime?.civilTime) || record.sampleTime?.physicalTime?.slice(11, 16)
-    return { time, value: Number(record.beatsPerMinute || 0) }
+    return { time, value: Number(record.beatsPerMinute || 0), timestamp: record.sampleTime?.physicalTime || null }
   }).filter((point) => point.time && point.value).sort((a, b) => a.time.localeCompare(b.time))
   const profile = raw.profileRaw || {}
   const settings = raw.settingsRaw || {}
@@ -510,33 +511,58 @@ function translateGoogleHealth(raw, selectedDate) {
       ...(point.electrocardiogram || {}),
       readingTime: point.electrocardiogram?.interval?.startTime,
     }))
+  const optionalDuration = value => typeof value === 'string' && /^-?\d+(?:\.\d+)?s$/.test(value) && durationSeconds(value) >= 0 ? durationSeconds(value) : null
+  const elapsedMinutes = (start, end) => {
+    const duration = (Date.parse(end) - Date.parse(start)) / 60000
+    return Number.isFinite(duration) && duration >= 0 ? duration : null
+  }
   const activities = dataPoints(raw.activitiesRaw).map((point) => {
     const exercise = point.exercise || {}
     const summary = exercise.metricsSummary || {}
     const start = exercise.interval?.startTime || ''
     const end = exercise.interval?.endTime || ''
-    const intervalDuration = (new Date(end) - new Date(start)) / 1000
-    const duration = durationSeconds(exercise.activeDuration) || (Number.isFinite(intervalDuration) ? Math.max(0, intervalDuration) : 0)
+    const active = optionalDuration(exercise.activeDuration)
+    const elapsed = elapsedMinutes(start, end)
+    const duration = active ?? (elapsed === null ? null : elapsed * 60)
+    const offset = typeof exercise.interval?.startUtcOffset === 'string' ? Number(exercise.interval.startUtcOffset.replace(/s$/, '')) : null
+    const localStartTime = Number.isFinite(offset) && offset !== null && Number.isFinite(Date.parse(start)) ? new Date(Date.parse(start) + offset * 1000).toISOString().slice(0, 19) : null
     const zoneDurations = summary.heartRateZoneDurations || {}
-    const zoneMinutes = (value) => value === undefined || value === null ? null : durationSeconds(value) / 60
+    const zoneMinutes = value => { const seconds = optionalDuration(value); return seconds === null ? null : seconds / 60 }
     const heartZoneMinutes = Object.keys(zoneDurations).length ? {
-      light: zoneMinutes(zoneDurations.lightTime),
-      moderate: zoneMinutes(zoneDurations.moderateTime),
-      vigorous: zoneMinutes(zoneDurations.vigorousTime),
-      peak: zoneMinutes(zoneDurations.peakTime),
+      light: zoneMinutes(zoneDurations.lightTime), moderate: zoneMinutes(zoneDurations.moderateTime),
+      vigorous: zoneMinutes(zoneDurations.vigorousTime), peak: zoneMinutes(zoneDurations.peakTime),
     } : null
+    const splitRecords = exercise.splitSummaries?.length ? exercise.splitSummaries : exercise.splits || []
     return {
       logId: point.dataPointName ?? point.name,
       activityName: exercise.displayName || String(exercise.exerciseType || 'Activity').replaceAll('_', ' '),
-      startTime: start,
-      duration: duration * 1000,
-      calories: summary.caloriesKcal,
-      distance: numeric(summary.distanceMillimeters, (value) => value / 1_000_000),
-      averageHeartRate: summary.averageHeartRateBeatsPerMinute,
+      exerciseType: exercise.exerciseType || null,
+      startTime: start, endTime: end || null, localStartTime,
+      duration: duration === null ? null : duration * 1000,
+      activeDurationMinutes: active === null ? null : active / 60,
+      elapsedDurationMinutes: elapsed,
+      calories: numeric(summary.caloriesKcal),
+      distance: numeric(summary.distanceMillimeters, value => value / 1_000_000),
+      averageHeartRate: numeric(summary.averageHeartRateBeatsPerMinute),
       steps: numeric(summary.steps),
       averagePaceSecondsPerMeter: numeric(summary.averagePaceSecondsPerMeter),
-      heartZoneMinutes,
-      activeZoneMinutes: { totalMinutes: summary.activeZoneMinutes },
+      averageSpeedKmh: numeric(summary.averageSpeedMillimetersPerSecond, value => value * .0036),
+      elevationGainMeters: numeric(summary.elevationGainMillimeters, value => value / 1000),
+      runVo2Max: numeric(summary.runVo2Max),
+      swimLengths: numeric(summary.totalSwimLengths),
+      poolLengthMeters: numeric(exercise.exerciseMetadata?.poolLengthMillimeters, value => value / 1000),
+      hasGps: typeof exercise.exerciseMetadata?.hasGps === 'boolean' ? exercise.exerciseMetadata.hasGps : null,
+      notes: typeof exercise.notes === 'string' ? exercise.notes.slice(0, 10000) : null,
+      sourceDevice: point.dataSource?.device?.displayName || null,
+      splits: splitRecords.slice(0, 1000).map(split => ({
+        startTime: split.startTime || null, endTime: split.endTime || null,
+        activeMinutes: zoneMinutes(split.activeDuration), elapsedMinutes: elapsedMinutes(split.startTime, split.endTime),
+        distanceKm: numeric(split.metricsSummary?.distanceMillimeters, value => value / 1_000_000),
+        calories: numeric(split.metricsSummary?.caloriesKcal), averageHeartRate: numeric(split.metricsSummary?.averageHeartRateBeatsPerMinute),
+        paceSecondsPerMeter: numeric(split.metricsSummary?.averagePaceSecondsPerMeter), type: split.splitType || null,
+      })),
+      events: (exercise.exerciseEvents || []).slice(0, 1000).filter(event => event.eventTime && event.exerciseEventType).map(event => ({ time: event.eventTime, type: event.exerciseEventType })),
+      heartZoneMinutes, activeZoneMinutes: { totalMinutes: numeric(summary.activeZoneMinutes) },
     }
   })
 
@@ -555,6 +581,7 @@ function translateGoogleHealth(raw, selectedDate) {
       sedentaryMinutes: todaySedentary,
     } },
     activityGoals: { goals: {} },
+    sedentaryIntervals: { intervals: dataPoints(raw.sedentaryIntervalsRaw).map(point => point.sedentaryPeriod?.interval).filter(interval => interval?.startTime && interval?.endTime).map(interval => ({ startTime: interval.startTime, endTime: interval.endTime })) },
     stepsIntraday: { 'activities-steps-intraday': { dataset: stepPoints } },
     caloriesIntraday: { 'activities-calories-intraday': { dataset: [] } },
     heartIntraday: {
@@ -612,7 +639,7 @@ function translateGoogleHealth(raw, selectedDate) {
     coreTemperature: { tempCore: currentCoreTemperature === null ? [] : [{ dateTime: selectedDate, value: { coreTemperature: currentCoreTemperature } }] },
     cardio: { cardioScore: currentCardio === null ? [] : [{ dateTime: selectedDate, value: { vo2Max: String(currentCardio) } }] },
     ecg: { ecgReadings },
-    activities: { activities },
+    activities: { activities, coverage: raw.activitiesRaw ? { startDate: shiftIso(selectedDate, -27), endDate: selectedDate } : null },
     identity: raw.identity,
     ...(raw.irnProfileRaw !== undefined || raw.irnAlertsRaw !== undefined
       ? { irregularRhythm: { profile: raw.irnProfileRaw, alerts: raw.irnAlertsRaw } }

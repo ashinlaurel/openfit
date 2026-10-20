@@ -99,50 +99,44 @@ function makeSleepTimeline(selectedDate: string): SleepStageSegment[] {
 }
 
 function makeActivities(selectedDate: string): ActivityItem[] {
-  return [
-    {
-      id: 'run-demo',
-      name: 'Outdoor run',
-      date: selectedDate,
-      time: '18:24',
-      durationMinutes: 38,
-      calories: 438,
-      distanceKm: 6.24,
-      averageHeartRate: 148,
-      zoneMinutes: 52,
-      steps: 7_842,
-      averagePaceSecondsPerMeter: 38 * 60 / 6_240,
-      heartZoneMinutes: { light: 6, moderate: 10, vigorous: 15, peak: 7 },
-    },
-    {
-      id: 'walk-demo',
-      name: 'Walk',
-      date: selectedDate,
-      time: '12:46',
-      durationMinutes: 24,
-      calories: 116,
-      distanceKm: 1.72,
-      averageHeartRate: 101,
-      zoneMinutes: 8,
-      steps: 2_236,
-      averagePaceSecondsPerMeter: 24 * 60 / 1_720,
-      heartZoneMinutes: { light: 16, moderate: 8, vigorous: 0, peak: 0 },
-    },
-    {
-      id: 'strength-demo',
-      name: 'Functional training',
-      date: localIso(new Date(dateFromIso(selectedDate).getTime() - dayMs)),
-      time: '19:08',
-      durationMinutes: 46,
-      calories: 326,
-      distanceKm: null,
-      averageHeartRate: 126,
-      zoneMinutes: 34,
-      steps: null,
-      averagePaceSecondsPerMeter: null,
-      heartZoneMinutes: { light: 10, moderate: 15, vigorous: 18, peak: 3 },
-    },
-  ]
+  const result: ActivityItem[] = []
+  for (let offset = 0; offset < 28; offset++) {
+    const date = new Date(Date.parse(`${selectedDate}T12:00:00Z`) - offset * dayMs).toISOString().slice(0, 10)
+    const epoch = Math.floor(Date.parse(`${date}T12:00:00Z`) / dayMs), weekday = new Date(`${date}T12:00:00Z`).getUTCDay()
+    const kinds = weekday === 1 ? ['run', 'walk'] : weekday === 2 ? ['strength'] : weekday === 3 ? ['run'] : weekday === 5 ? ['walk'] : weekday === 6 ? [epoch % 2 ? 'strength' : 'swim'] : []
+    for (const kind of kinds) {
+      const run = kind === 'run', walk = kind === 'walk', swim = kind === 'swim'
+      const duration = run ? 34 + epoch % 10 : walk ? 20 + epoch % 9 : swim ? 30 + epoch % 6 : 40 + epoch % 13
+      const distance = run ? 5.8 + epoch % 8 * .13 : walk ? 1.5 + epoch % 7 * .08 : swim ? 1.2 : null
+      const time = run ? '18:24' : walk ? '12:46' : swim ? '08:30' : '19:08'
+      const pause = run && epoch % 2 ? 3 : 0
+      const start = `${date}T${time}:00+02:00`, startMs = Date.parse(start), end = new Date(startMs + (duration + pause) * 60000).toISOString()
+      const pace = distance ? duration * 60 / (distance * 1000) : null
+      const heart = run ? 140 + epoch % 15 : walk ? 95 + epoch % 12 : swim ? 112 + epoch % 9 : 120 + epoch % 15
+      const parts = run && distance ? Array.from({length:Math.ceil(distance)}, (_,i) => Math.min(1,distance-i)) : []
+      const weights = parts.map((d,i) => d * (1 + Math.sin(i + epoch) * .06)), weightSum = weights.reduce((a,b)=>a+b,0)
+      let cursor = startMs
+      const splits = parts.map((d,i) => {
+        const active = duration * weights[i] / weightSum, elapsed = active + pause * d / distance!
+        const from = new Date(cursor).toISOString(); cursor += elapsed * 60000
+        return {startTime:from,endTime:new Date(cursor).toISOString(),activeMinutes:active,elapsedMinutes:elapsed,distanceKm:d,calories:null,averageHeartRate:heart + i - 2,paceSecondsPerMeter:active * 60 / (d * 1000),type:'DISTANCE'}
+      })
+      result.push({
+        id:`${kind}-demo-${date}`, name:run?'Outdoor run':walk?'Walk':swim?'Pool swim':'Functional training',
+        exerciseType:run?'RUNNING':walk?'WALKING':swim?'SWIMMING_POOL':'STRENGTH_TRAINING', date,time,startTime:start,endTime:end,
+        durationMinutes:duration,activeDurationMinutes:duration,elapsedDurationMinutes:duration+pause,
+        calories:Math.round(duration * (run?10.5:walk?4.7:swim?7:6.4)),distanceKm:distance,averageHeartRate:heart,
+        zoneMinutes:run?duration+12:walk?8:swim?duration:duration-5,steps:run?Math.round(distance!*1250):walk?Math.round(distance!*1300):null,
+        averagePaceSecondsPerMeter:pace,averageSpeedKmh:distance?distance/(duration/60):null,
+        elevationGainMeters:run&&epoch%3===0?18+epoch%12:null,runVo2Max:run&&epoch%4===0?44.5:null,
+        swimLengths:swim?48:null,poolLengthMeters:swim?25:null,hasGps:null,sourceDevice:'Google Fitbit Air',
+        notes:run&&epoch%3===0?'Comfortable pace. Kept the first kilometre easy.':null,
+        heartZoneMinutes:walk?{light:duration-8,moderate:8,vigorous:0,peak:0}:run?{light:6,moderate:10,vigorous:duration-20,peak:4}:{light:10,moderate:duration-15,vigorous:5,peak:0},
+        splits,events:pause?[{time:new Date(startMs+duration/2*60000).toISOString(),type:'PAUSE'},{time:new Date(startMs+(duration/2+pause)*60000).toISOString(),type:'RESUME'}]:[],
+      })
+    }
+  }
+  return result.sort((a,b)=>`${b.date}T${b.time}`.localeCompare(`${a.date}T${a.time}`))
 }
 
 export function createDemoData(selectedDate = localIso()): DashboardData {
@@ -152,6 +146,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
   const latestSleepMinutes = latest.sleepMinutes ?? 0
   const stepsIntraday = makeStepsSeries()
   const heartRateIntraday = makeHeartSeries()
+  const activities = makeActivities(selectedDate)
 
   return {
     source: 'demo',
@@ -189,6 +184,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       activeMinutesGoal: 60,
       zoneMinutes: latest.zoneMinutes,
       sedentaryMinutes: latest.sedentaryMinutes,
+      sedentaryIntervals: [[9, 0, 10, 12], [10, 25, 11, 5], [11, 20, 12, 40], [14, 0, 15, 18], [15, 35, 16, 12], [16, 40, 17, 45]].map(([h, m, eh, em]) => ({ startTime: `${selectedDate}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`, endTime: `${selectedDate}T${String(eh).padStart(2, '0')}:${String(em).padStart(2, '0')}:00` })),
       stepsIntraday,
       caloriesIntraday: stepsIntraday.map((point, index) => ({
         time: point.time,
@@ -200,6 +196,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       restingHeartRate: latest.restingHeartRate,
       heartRateMin: 53,
       heartRateMax: 171,
+      heartRateSamples: activities.flatMap((item, index) => Array.from({length:Math.ceil(item.elapsedDurationMinutes || 0)}, (_,i) => ({ timestamp:new Date(Date.parse(item.startTime!) + i*60000).toISOString(), value:Math.round((item.averageHeartRate || 100) - 12 + Math.min(12,i*.9) + Math.sin(i*.6+index)*9) })).filter((_,i)=>i<9 || i>12)),
       heartRateIntraday,
       hrvMs: latest.hrvMs,
       hrvDeepSleepRmssdMs: (latest.hrvMs ?? 0) + 7,
@@ -245,7 +242,8 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       caloriesIn: latest.caloriesIn,
     },
     trends,
-    activities: makeActivities(selectedDate),
+    workoutCoverage: {startDate:new Date(Date.parse(`${selectedDate}T12:00:00Z`)-27*dayMs).toISOString().slice(0,10),endDate:selectedDate},
+    activities,
     insights: [
       {
         id: 'activity',
