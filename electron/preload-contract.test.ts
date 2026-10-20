@@ -117,3 +117,39 @@ describe('preload bridge contract', () => {
     expect(invoke).toHaveBeenCalledTimes(4)
   })
 })
+
+describe('todo preload bridge contract', () => {
+  it('exposes only named task operations rather than filesystem access', () => {
+    const { exposed, invoke } = loadPreloadBridge()
+    const todos = exposed.get('todos')
+    expect(Object.keys(todos ?? {}).sort()).toEqual(['batch', 'export', 'import', 'load', 'mutate', 'recover'])
+    todos?.load()
+    expect(invoke).toHaveBeenLastCalledWith('todos:load')
+    todos?.batch([{ type: 'complete', id: 'a' }])
+    expect(invoke).toHaveBeenLastCalledWith('todos:batch', [{ type: 'complete', id: 'a' }])
+  })
+})
+
+describe('habit preload bridge contract',()=>{
+  it('exposes only named habit operations',()=>{
+    const {exposed,invoke}=loadPreloadBridge()
+    const habits=exposed.get('habits')
+    expect(Object.keys(habits??{}).sort()).toEqual(['export','load','mutate','recover'])
+    habits?.mutate({type:'checkin',id:'a',date:'2026-10-19'})
+    expect(invoke).toHaveBeenLastCalledWith('habits:mutate',{type:'checkin',id:'a',date:'2026-10-19'})
+  })
+})
+
+describe('reader preload bridge contract',()=>{
+  it('exposes named library operations without filesystem or arbitrary fetch access',()=>{
+    const {exposed,invoke}=loadPreloadBridge()
+    const reader=exposed.get('reader')
+    expect(Object.keys(reader??{}).sort()).toEqual(['export','fetchArticle','load','mutate','recover','refresh','save','subscribe'])
+    reader?.save('https://example.com/article')
+    expect(invoke).toHaveBeenLastCalledWith('reader:save','https://example.com/article')
+    reader?.subscribe('https://example.com/rss')
+    expect(invoke).toHaveBeenLastCalledWith('reader:subscribe','https://example.com/rss')
+    reader?.mutate({type:'update',id:'a',patch:{state:'finished'}})
+    expect(invoke).toHaveBeenLastCalledWith('reader:mutate',{type:'update',id:'a',patch:{state:'finished'}})
+  })
+})

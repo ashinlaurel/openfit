@@ -108,7 +108,7 @@ describe('Codex app-server service', () => {
         ephemeral: true,
       },
     })
-    expect(child.messages[2].params?.developerInstructions).toContain('health-data assistant')
+    expect(child.messages[2].params?.developerInstructions).toContain('health-data and task-planning assistant')
     expect(service.getStatus()).toMatchObject({ state: 'ready', connected: true, threadId: 'thread-health' })
 
     await service.dispose()

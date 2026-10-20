@@ -1,4 +1,4 @@
-export type PageId = 'today' | 'activity' | 'health' | 'sleep' | 'body' | 'devices'
+export type PageId = 'today' | 'drinking' | 'movement' | 'activity' | 'health' | 'sleep' | 'body' | 'devices' | 'todos' | 'habits' | 'reader' | 'reports'
 
 export type DataSource = 'demo' | 'fitbit' | 'google-health' | 'cache'
 
@@ -35,7 +35,34 @@ export interface TrendPoint {
   caloriesIn: number | null
 }
 
+export interface WorkoutSplit {
+  startTime: string | null
+  endTime: string | null
+  activeMinutes: number | null
+  elapsedMinutes: number | null
+  distanceKm: number | null
+  calories: number | null
+  averageHeartRate: number | null
+  paceSecondsPerMeter: number | null
+  type: string | null
+}
 export interface ActivityItem {
+  exerciseType?: string | null
+  startTime?: string | null
+  endTime?: string | null
+  activeDurationMinutes?: number | null
+  elapsedDurationMinutes?: number | null
+  averageSpeedKmh?: number | null
+  elevationGainMeters?: number | null
+  runVo2Max?: number | null
+  swimLengths?: number | null
+  poolLengthMeters?: number | null
+  hasGps?: boolean | null
+  notes?: string | null
+  sourceDevice?: string | null
+  splits?: WorkoutSplit[]
+  events?: Array<{ time: string; type: string }>
+
   id: string
   name: string
   date: string
@@ -115,6 +142,7 @@ export interface DashboardData {
     activeMinutesGoal: number | null
     zoneMinutes: number | null
     sedentaryMinutes: number | null
+    sedentaryIntervals?: Array<{ startTime: string; endTime: string }>
     stepsIntraday: TimePoint[]
     caloriesIntraday: TimePoint[]
   }
@@ -123,6 +151,7 @@ export interface DashboardData {
     restingHeartRate: number | null
     heartRateMin: number | null
     heartRateMax: number | null
+    heartRateSamples?: Array<{ timestamp: string; value: number }>
     heartRateIntraday: TimePoint[]
     hrvMs: number | null
     hrvDeepSleepRmssdMs: number | null
@@ -168,6 +197,7 @@ export interface DashboardData {
     caloriesIn: number | null
   }
   trends: TrendPoint[]
+  workoutCoverage?: { startDate: string; endDate: string } | null
   activities: ActivityItem[]
   insights: Array<{
     id: string
@@ -261,8 +291,113 @@ export interface HealthAssistantBridge {
     requestId: string
     message: string
     healthContext: string
+    scope?: 'todos' | 'habits' | 'health'
   }) => Promise<{ requestId: string }>
   cancel: (requestId: string) => Promise<void>
   reset: () => Promise<void>
   onEvent: (callback: (event: HealthAssistantEvent) => void) => () => void
+}
+
+export interface TodoTask {
+  id: string
+  title: string
+  notes: string
+  due: string
+  priority: 'low' | 'normal' | 'high'
+  tags: string[]
+  state: 'active' | 'completed' | 'trashed'
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  trashedAt: string | null
+  history: Array<{ at: string; actor: string; action: string; before?: { title: string; notes: string; due: string; priority: string; tags: string[]; state: string } }>
+}
+export interface TodoArchive { version: 1; tasks: TodoTask[] }
+export interface TodoAction { type: 'create' | 'update' | 'complete' | 'reopen' | 'trash' | 'restore' | 'purge'; id?: string; task?: Partial<TodoTask>; actor?: 'user' | 'assistant' }
+export interface TodoBridge {
+  load: () => Promise<TodoArchive>
+  mutate: (action: TodoAction) => Promise<TodoArchive>
+  batch: (actions: TodoAction[]) => Promise<TodoArchive>
+  recover: () => Promise<TodoArchive>
+  export: () => Promise<void>
+  import: () => Promise<TodoArchive>
+}
+
+export type HabitColor = 'mint' | 'blue' | 'violet' | 'amber' | 'rose'
+export type HabitIcon = 'spark' | 'book' | 'move' | 'water' | 'moon' | 'mind' | 'sun' | 'leaf'
+export interface HabitFields { title: string; note: string; color: HabitColor; icon: HabitIcon; days: number[] }
+export interface Habit extends HabitFields {
+  id: string
+  createdDate: string
+  createdAt: string
+  updatedAt: string
+  archived: boolean
+  schedules: Array<{ from: string; days: number[] }>
+  checkins: Record<string, { at: string }>
+  history: Array<{ at: string; action: string; date?: string }>
+}
+export interface HabitArchive { version: 1; habits: Habit[] }
+export type HabitAction = { type: 'create' | 'update'; id?: string; habit: HabitFields } | { type: 'checkin'; id: string; date: string } | { type: 'archive' | 'restore'; id: string }
+export interface HabitBridge {
+  load: () => Promise<HabitArchive>
+  mutate: (action: HabitAction) => Promise<HabitArchive>
+  export: () => Promise<void>
+  recover: () => Promise<HabitArchive>
+}
+
+export interface ReaderBlock { type: 'paragraph' | 'heading' | 'quote' | 'code'; text: string }
+export type ReaderArticleState = 'unread' | 'reading' | 'finished' | 'archived'
+export interface ReaderArticle {
+  id: string; url: string; title: string; siteName: string; author: string; excerpt: string
+  publishedAt: string | null; addedAt: string; updatedAt: string; lastReadAt: string | null; fetchedAt: string | null
+  feedIds: string[]; saved: boolean; starred: boolean; state: ReaderArticleState; progress: number; tags: string[]
+  blocks: ReaderBlock[]; contentStatus: 'pending' | 'ready' | 'unavailable'; fetchError: string
+  wordCount: number | null; readingMinutes: number | null
+}
+export interface ReaderFeed { id: string; url: string; title: string; addedAt: string; lastFetchedAt: string | null; error: string }
+export interface ReaderArchive { version: 1; articles: ReaderArticle[]; feeds: ReaderFeed[] }
+export type ReaderAction = { type: 'update'; id: string; patch: Partial<Pick<ReaderArticle, 'state' | 'saved' | 'starred' | 'progress' | 'tags'>> } | { type: 'unsubscribe'; id: string }
+export interface ReaderBridge {
+  load: () => Promise<ReaderArchive>
+  save: (url: string) => Promise<{ store: ReaderArchive; articleId: string }>
+  subscribe: (url: string) => Promise<ReaderArchive>
+  refresh: (id?: string) => Promise<ReaderArchive>
+  fetchArticle: (id: string) => Promise<ReaderArchive>
+  mutate: (action: ReaderAction) => Promise<ReaderArchive>
+  export: () => Promise<void>
+  recover: () => Promise<ReaderArchive>
+}
+
+export interface ReportObservation {
+  sourceReferenceText?: string; referenceDefault?: boolean
+  key: string; label: string; group: string; valueText: string; value: number | null; qualifier: string
+  unit: string; referenceText: string; low: number | null; high: number | null; lowInclusive: boolean; highInclusive: boolean
+  page: number; sourceText: string; method: 'text' | 'ocr' | 'codex' | 'manual'; needsReview: boolean
+}
+export interface MedicalReport {
+  id: string; hash: string; fileName: string; title: string; date: string; pageCount: number
+  observations: ReportObservation[]; archived: boolean; importedAt: string; updatedAt: string
+}
+export type ReportReference = Pick<ReportObservation,'referenceText'|'low'|'high'|'lowInclusive'|'highInclusive'>
+export interface ReportArchive { version: 1; reports: MedicalReport[]; referenceDefaults?: Record<string,ReportReference> }
+export interface ReportDraft {
+  id: string; fileName: string; title: string; detectedDate: string; pageCount: number; existingId: string | null
+  observations: ReportObservation[]; warnings: string[]
+}
+export interface ReportSaveInput { title: string; date: string; observations: ReportObservation[]; confirmed: boolean }
+export interface ReportProgress { page: number; total: number; stage: 'text' | 'ocr' }
+export interface ReportsBridge {
+  load: () => Promise<ReportArchive>
+  choose: () => Promise<ReportDraft | null>
+  edit: (id: string) => Promise<ReportDraft>
+  ocr: (id: string) => Promise<ReportDraft>
+  assist: (id: string) => Promise<ReportDraft>
+  cancel: () => Promise<void>
+  discard: (id: string) => Promise<void>
+  save: (id: string, input: ReportSaveInput) => Promise<ReportArchive>
+  archive: (id: string, archived: boolean) => Promise<ReportArchive>
+  preview: (input: {draftId?:string;reportId?:string;page:number}) => Promise<{image:string}>
+  export: () => Promise<void>
+  recover: () => Promise<ReportArchive>
+  onProgress: (callback: (progress: ReportProgress) => void) => () => void
 }

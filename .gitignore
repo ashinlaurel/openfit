@@ -6,3 +6,10 @@ screenshots/
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# Private medical documents and extracted report artifacts
+/*.pdf
+/private-reports/
+
+# Generated local code knowledge graph
+graphify-out/
