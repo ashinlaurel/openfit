@@ -1,5 +1,6 @@
 'use strict'
 const { identify } = require('./report-fields.cjs')
+const isTableBoundary = row => row.items.some(item=>/^(?:page \d|clinical significance|interpretation|conditions of laboratory|approved by|reviewed by)\b/i.test(String(item.text).trim()))
 const tidy = value => String(value || '').replace(/\u0000/g,' ').replace(/\s+/g,' ').trim()
 function cleanReference(value) { return String(value || '').replace(/(\d)\s*\u0000\s*(?=\d)/g,'$1 - ').replace(/\u0000|\ufffd/g,'?').replace(/\s+/g,' ').trim() }
 function parseValue(value) {
@@ -33,10 +34,10 @@ function detectDate(pages) {
   const iso=text.match(/(?:collected|collection date|sample date|report date|reported)\s*[:|]?\s*(\d{4}-\d{2}-\d{2})/i)
   return iso&&validDate(iso[1])?iso[1]:''
 }
-function validDate(date) { if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;const instant=Date.parse(date+'T12:00:00Z');return Number.isFinite(instant)&&new Date(instant).toISOString().slice(0,10)===date&&date>='1900-01-01'&&date<=new Date().toISOString().slice(0,10) }
+function validDate(date) { if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))return false;const instant=Date.parse(date+'T12:00:00Z');return Number.isFinite(instant)&&new Date(instant).toISOString().slice(0,10)===date&&date>='1900-01-01'&&date<=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()) }
 // Four-column reports center values vertically beside wrapped names and methods.
 // Anchor to result cells, then associate only nearby test-name rows and their references.
-function fourColumnFields(page,headerIndex,urine) {
+function fourColumnFields(page,headerIndex) {
   const header=page.rows[headerIndex],resultX=header.items.find(item=>/^results?$/i.test(tidy(item.text))).x
   const unitX=header.items.find(item=>/^units?$/i.test(tidy(item.text))).x
   const referenceX=header.items.find(item=>/reference|biological/i.test(item.text)).x
@@ -56,7 +57,7 @@ function fourColumnFields(page,headerIndex,urine) {
     let match=null
     for(let start=previousResult+1;start<=index;start++){
       if(rows[start].y-row.y>65||rows[start].y<row.y||/method|indicator|calculated|chromatography|microscopy|impedance|immunoassay|photometry|kinetic|urease|uricase/i.test(rows[start].left))continue
-      const label=tidy(rows.slice(start,index+1).map(line=>line.left).join(' ')),field=identify(label,urine)
+      const label=tidy(rows.slice(start,index+1).map(line=>line.left).join(' ')),field=identify(label,rows[start].urineContext)
       if(field){match={start,label,field};break}
     }
     if(!match)continue
@@ -82,11 +83,17 @@ function extractFields(pages) {
     const rows=page.rows
     let headerIndex=rows.findIndex(row=>row.items.some(item=>/^results?$/i.test(tidy(item.text)))&&row.items.some(item=>/reference|biological/i.test(item.text)))
     if(headerIndex<0)continue
-    const bodyHeading=rows.slice(headerIndex+1,headerIndex+8).map(row=>row.items.map(item=>item.text).join(' ')).join('\n')
-    if(/^(?:urine complete|urine.*examination|clinical pathology)/im.test(bodyHeading))urine=true
-    else if(/^(?:biochemistry|haematology|hematology|immunology|liver function test|kidney function test|lipid profile|complete blood count)\b/im.test(bodyHeading))urine=false
+    // Specimen sections can begin anywhere on a page and continue onto the next.
+    // Only inspect the test-name column, so reference notes cannot change context.
+    const contextResultX=rows[headerIndex].items.find(item=>/^results?$/i.test(tidy(item.text))).x
+    for(const row of rows.slice(headerIndex+1)){
+      const heading=tidy(row.items.filter(item=>item.x<contextResultX-12).map(item=>item.text).join(' '))
+      if(/^(?:urine complete(?: analysis)?|urine[, ]+(?:physical|chemical|microscopic) examination|clinical pathology)\b/i.test(heading))urine=true
+      else if(/^(?:biochemistry|haematology|hematology|immunology|liver function test|kidney function test|lipid profile|complete blood count|thyroid (?:profile|function test)|nutritional status|diabetic profile|blood profile)\b/i.test(heading))urine=false
+      row.urineContext=urine
+    }
     if(rows[headerIndex].items.some(item=>/^units?$/i.test(tidy(item.text)))){
-      for(const observation of fourColumnFields(page,headerIndex,urine)){
+      for(const observation of fourColumnFields(page,headerIndex)){
         if(observations.some(item=>item.key===observation.key&&item.unit.toLowerCase()===observation.unit.toLowerCase())){warnings.push(`Repeated field on page ${page.number}: ${observation.label}. Review the selected result.`);continue}
         observations.push(observation)
       }
@@ -105,10 +112,10 @@ function extractFields(pages) {
       const row=classified[index]
       if(!tidy(row.middle)||!tidy(row.left)||/page \d|approved|reviewed/i.test(row.left))continue
       let end=index+1
-      while(end<classified.length&&!tidy(classified[end].middle)&&end-index<12)end++
+      while(end<classified.length&&!tidy(classified[end].middle)&&!isTableBoundary(classified[end])&&end-index<12)end++
       const following=classified.slice(index+1,end)
       const label=tidy([row.left,...following.slice(0,3).map(line=>line.left)].join(' '))
-      const field=identify(label,urine)
+      const field=identify(label,row.urineContext)
       if(!field)continue
       const valueText=cleanReference(row.middle).replace(/\s+\(?(?:H|L)\)?$/,'').trim()
       if(!valueText||valueText.length>100||/^[A-Za-z ]+:/.test(valueText))continue

@@ -10,6 +10,12 @@ screenshots/
 # Private medical documents and extracted report artifacts
 /*.pdf
 /private-reports/
+/cloud/.env
+/cloud/web.env
+.env
+.env.local
+.env.*.local
+/cloud/data/
 
 # Generated local code knowledge graph
 graphify-out/

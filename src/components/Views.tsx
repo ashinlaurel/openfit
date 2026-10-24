@@ -1,3 +1,4 @@
+import { movementHours } from '@/lib/movement'
 import type { ReactNode } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -200,19 +201,11 @@ function timeXValues(labels: string[]) {
 }
 
 function hourlyBuckets(points: TimePoint[]) {
-  const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, value: 0, seen: false }))
-  points.forEach((point) => {
-    const match = point.time.match(/(\d{1,2}):(\d{2})/)
-    if (!match) return
-    const hour = Number(match[1])
-    if (hour < 0 || hour > 23) return
-    buckets[hour].value += point.value
-    buckets[hour].seen = true
-  })
+  const hours = movementHours(points)
   return {
-    values: buckets.map((bucket) => bucket.seen ? bucket.value : null),
-    labels: buckets.map((bucket) => `${String(bucket.hour).padStart(2, '0')}:00`),
-    xValues: buckets.map((bucket) => bucket.hour),
+    values: hours.map(point => point.steps),
+    labels: hours.map(point => `${String(point.hour).padStart(2, '0')}:00`),
+    xValues: hours.map(point => point.hour),
   }
 }
 

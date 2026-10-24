@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { FitbitBridge, HealthAssistantBridge, TodoBridge, HabitBridge, ReaderBridge, ReportsBridge } from './types'
+import type { FitbitBridge, CloudBridge, HealthAssistantBridge, TodoBridge, HabitBridge, ReaderBridge, ReportsBridge } from './types'
 
 declare global {
   interface Window {
@@ -9,6 +9,7 @@ declare global {
     habits?: HabitBridge
     todos?: TodoBridge
     fitbit?: FitbitBridge
+    cloud?: CloudBridge
     healthAssistant?: HealthAssistantBridge
   }
 }

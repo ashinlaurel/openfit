@@ -1,4 +1,6 @@
-export type PageId = 'today' | 'drinking' | 'movement' | 'activity' | 'health' | 'sleep' | 'body' | 'devices' | 'todos' | 'habits' | 'reader' | 'reports'
+export type PageId = 'today' | 'drinking' | 'movement' | 'activity' | 'gym' | 'health' | 'sleep' | 'body' | 'devices' | 'todos' | 'habits' | 'reader' | 'reports'
+
+import type { WorkoutLinks, WorkoutLinkInput } from './lib/gym-sync'
 
 export type DataSource = 'demo' | 'fitbit' | 'google-health' | 'cache'
 
@@ -263,12 +265,33 @@ export interface FitbitBridge {
   connect: () => Promise<{ ok: boolean; message?: string }>
   disconnect: () => Promise<FitbitAuthStatus>
   sync: (date: string) => Promise<RawFitbitPayload>
-  getCachedData: () => Promise<RawFitbitPayload | null>
+  getCachedData: (date?: string) => Promise<RawFitbitPayload | null>
   getCachedArchive: () => Promise<RawHealthArchive>
   exportData: () => Promise<{ canceled: boolean; path?: string }>
   openExternal: (url: string) => Promise<void>
   onAuthComplete: (callback: (result: { ok: boolean; error?: string }) => void) => () => void
   onSyncProgress: (callback: (progress: { completed: number; total: number; key: string; date?: string }) => void) => () => void
+}
+
+export interface CloudStatus {
+  configured: boolean
+  apiUrl: string
+  user: { id: string; name: string } | null
+  error?: string
+}
+export interface CloudBridge {
+  getStatus: () => Promise<CloudStatus>
+  pair: (apiUrl: string, code: string) => Promise<CloudStatus>
+  disconnect: () => Promise<CloudStatus>
+  getOpenGym: () => Promise<{ state: Record<string, unknown> | null; rev: number; exerciseNames?: Record<string, string>; syncedAt?: string; fromCache?: boolean; syncError?: string }>
+  getWorkoutLinks: () => Promise<WorkoutLinks>
+  saveWorkoutLink: (input: WorkoutLinkInput) => Promise<WorkoutLinks>
+  getArchive: () => Promise<{ archive: { version: 1; todos: TodoArchive; habits: HabitArchive; reports: ReportArchive }; rev: number }>
+  saveArchive: (archive: { version: 1; todos: TodoArchive; habits: HabitArchive; reports: ReportArchive }, baseRev: number) => Promise<{ archive: unknown; rev: number }>
+  getPdf: (hash: string) => Promise<string>
+  savePdf: (hash: string, base64: string) => Promise<void>
+  deletePdf: (hash: string) => Promise<void>
+  onSync: (callback: (result: { ok: boolean; error?: string; rev?: number; at?: string }) => void) => () => void
 }
 
 export interface HealthAssistantStatus {

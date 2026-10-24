@@ -10,8 +10,14 @@ Latest values use the report date, not upload order. Clicking a marker opens all
 
 Trend charts shade the saved numeric interval in green and label its boundaries, including one-sided bounds and single-point histories. Explicitly labelled Normal or Sufficient subranges can be shaded from categorical references; unparseable and qualitative references are not guessed. Other charts do not receive a band unless explicitly supplied.
 
-The index and original PDF copies are encrypted using Electron safeStorage in the local app-data directory (`reports.secure.json`, `medical-pdfs/`). A previous index supports recovery. Reimporting the same PDF runs fresh extraction for review and updates its existing record on save rather than duplicating trend points. Review/edit preserves the saved fields until explicitly changed. Archiving is reversible. JSON export is explicitly unencrypted. These files are local to this installation and are not a cloud backup.
+The index and original PDF copies are encrypted using Electron safeStorage in the local app-data directory (`reports.secure.json`, `medical-pdfs/`). When Open Gym cloud storage is paired, the report index and source PDFs sync to the VM and are encrypted there with the OpenFit cloud storage key. A previous local index supports recovery. Reimporting the same PDF runs fresh extraction for review and updates its existing record on save rather than duplicating trend points. Review/edit preserves the saved fields until explicitly changed. Archiving is reversible. JSON export is explicitly unencrypted. See [cloud storage](CLOUD_SYNC.md) for backup and key handling.
 
 Personal PDFs are excluded from Git at the repository root. No personal values or PDFs are included in source or test fixtures. The supplied initial report was imported through the application's review flow into private app data.
 
 Validation: synthetic parser/archive/history tests cover qualified and qualitative values, ambiguous dates, missing glyphs, strict reference bounds, duplicate imports, review confirmation, unit separation, archive restore, and AI evidence checking. The provided selectable PDF and page previews were also checked locally.
+
+## Doctor sharing (private web)
+
+The `/shared-reports#<random-token>` URL renders the existing Reports UI in read-only mode. It includes all active saved reports, trends and authenticated source-page previews, and reflects future saved updates. Other OpenFit pages still require owner sign-in. The `/share-api` endpoint permits only `load` and `preview`, validates the bearer token server-side, and returns no-store responses. Tokens stay in the URL fragment and request authorization header rather than server URL logs. The server stores only the token hash in `/data/report-share.json` on the persistent web volume.
+
+In the signed-in web Reports page, **Share with doctor** creates/replaces the link or revokes it. Anyone holding the current link can read the shared reports; replacing or revoking it removes subsequent access. Archived reports are excluded. The shared page is marked noindex and bypasses service-worker caching.

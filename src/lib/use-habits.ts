@@ -10,7 +10,7 @@ export function useHabits() {
     catch(e) { setError(e instanceof Error ? e.message:'Could not load habits.') }
     finally { setLoading(false) }
   },[])
-  useEffect(()=>{void reload()},[reload])
+  useEffect(()=>{void reload();return window.cloud?.onSync(result=>{if(result.ok)void reload()})},[reload])
   const perform=useCallback(async(action:HabitAction|'export'|'recover')=>{
     if(locked.current)return false
     locked.current=true;setBusy(true)

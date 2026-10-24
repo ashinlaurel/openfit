@@ -1,3 +1,4 @@
+import { indiaInstant } from './timezone'
 import type { DashboardData } from '@/types'
 
 export function offsetDate(date: string, offset: number) {
@@ -42,7 +43,7 @@ export function socialJetlag(days: DashboardData[], date: string, workdays: numb
   const records = new Map(days.map(day => [day.selectedDate, day]))
   for (const day of records.values()) {
     if (day.selectedDate < offsetDate(date, -27) || day.selectedDate > date) continue
-    const start = Date.parse(day.sleep.startTime ?? ''), end = Date.parse(day.sleep.endTime ?? '')
+    const start = indiaInstant(day.sleep.startTime ?? '').getTime(), end = indiaInstant(day.sleep.endTime ?? '').getTime()
     if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start || end - start > 24 * 3600000) continue
     const parts = formatter.formatToParts(new Date((start + end) / 2))
     const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(p => p.type === type)?.value ?? ''

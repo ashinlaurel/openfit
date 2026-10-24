@@ -1,3 +1,4 @@
+import { indiaDate } from './timezone'
 import type { DashboardData, TrendPoint } from '@/types'
 
 export interface BaselineComparison {
@@ -84,11 +85,7 @@ function minutesText(minutes: number) {
   return `${hours} h ${remainder} min`
 }
 
-function localIsoToday() {
-  const today = new Date()
-  const offset = today.getTimezoneOffset() * 60_000
-  return new Date(today.getTime() - offset).toISOString().slice(0, 10)
-}
+const localIsoToday = indiaDate
 
 export function analyzeHome(data: DashboardData): HomeAnalysis {
   const steps = compareWithPersonalBaseline(data, data.activity.steps, (point) => point.steps)

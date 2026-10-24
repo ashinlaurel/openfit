@@ -32,6 +32,27 @@ describe('medical report transcription and archive',()=>{
   const rows=[row(700,[[40,'Test'],[250,'Result'],[430,'Biological Reference']]),row(650,[[40,'Glucose, Random'],[260,'96'],[450,'70 - 140']]),row(638,[[450,'mg/dL']])]
   expect(parser.extractFields([{number:1,rows}]).observations[0]).toMatchObject({key:'glucose-random',value:96,unit:'mg/dL'})
  })
+ it.each([false,true])('tracks mid-page urine sections, continuation pages, and a later thyroid section (units column: %s)',(fourColumns)=>{
+  const tableHeader=fourColumns?header:row(700,[[40,'Test'],[250,'Result'],[430,'Biological Reference']])
+  const result=(y:number,label:string,value:string,reference:string)=>row(y,[[40,label],[260,value],[450,reference]])
+  const pages=[{number:1,rows:[tableHeader,row(680,[[40,'Kidney Function Test']]),result(660,'Chloride','99','98 - 107'),
+   row(640,[[40,'Clinical Significance - Kidney Function Test']]),row(620,[[40,'Follow up with liver function tests.']]),
+   row(600,[[40,'Urine Complete Analysis']]),result(580,'Colour','Pale yellow','Pale yellow'),result(560,'pH','7.0','5 - 8'),row(20,[[450,'Page 1 of 3']])]},
+   {number:2,rows:[tableHeader,result(660,'Protein','Nil','Nil'),result(640,'Uric Acid Crystals','Nil','Nil'),result(620,'Phosphate Crystals','Nil','Nil'),result(600,'Calcium Oxalate Crystals','Nil','Nil')]},
+   {number:3,rows:[tableHeader,row(680,[[40,'Thyroid Profile']]),result(660,'Thyroid Stimulating Hormone','1.05','0.35 - 4.94')]}]
+  const results=parser.extractFields(pages).observations
+  expect(results.map((o:any)=>o.key)).toEqual(['chloride','urine-colour','urine-ph','urine-protein','urine-uric-acid-crystals','urine-phosphate-crystals','urine-calcium-oxalate-crystals','tsh'])
+  expect(results.find((o:any)=>o.key==='urine-ph')).toMatchObject({referenceText:'5 - 8',low:5,high:8})
+ })
+ it('ends three-column reference intervals before discussion and page footers',()=>{
+  const tableHeader=row(700,[[40,'Test'],[250,'Result'],[430,'Biological Reference']])
+  const rows=[tableHeader,row(650,[[40,'Vitamin D'],[260,'25'],[450,'Deficient: < 20']]),row(638,[[450,'Sufficient: 30 - 100']]),row(626,[[450,'ng/mL']]),
+   row(610,[[40,'Clinical Significance - Vitamin D']]),row(600,[[40,'Discussion'],[450,'Not a reference interval']]),
+   row(550,[[40,'Glucose, Random'],[260,'90'],[450,'70 - 140']]),row(538,[[450,'mg/dL']]),row(20,[[450,'Page 1 of 1']])]
+  const results=parser.extractFields([{number:1,rows}]).observations
+  expect(results[0]).toMatchObject({referenceText:'Deficient: < 20 Sufficient: 30 - 100',unit:'ng/mL'})
+  expect(results[1]).toMatchObject({referenceText:'70 - 140',low:70,high:140,unit:'mg/dL'})
+ })
  it('preserves qualitative, qualified and ambiguous numeric results',()=>{
   expect(parser.parseValue('Nil').value).toBeNull()
   expect(parser.parseValue('0-1').value).toBeNull()

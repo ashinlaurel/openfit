@@ -181,6 +181,7 @@ For a longer checklist, see [Google Health setup](docs/GOOGLE_HEALTH_SETUP.md).
 electron/
   main.cjs                    Electron shell, OAuth loopback, IPC, encrypted storage
   preload.cjs                 Minimal typed IPC bridge
+  cloud-service.cjs           Open Gym pairing and encrypted cloud archive client
   codex-service.cjs           Read-only Codex app-server JSONL client
   google-health-service.cjs   Google Health API v4 provider
   fitbit-legacy-service.cjs   Legacy Fitbit Web API provider with PKCE
@@ -197,6 +198,8 @@ docs/
   DATA_COVERAGE.md            Data coverage and limitations
   GOOGLE_HEALTH_SETUP.md      Extended OAuth setup guide
   RELEASE.md                  Signing, notarization, and release process
+cloud/
+  server.mjs                  Optional Open Gym authenticated cloud API
 ```
 
 See [Architecture](docs/ARCHITECTURE.md) for security boundaries and design decisions.
@@ -216,6 +219,18 @@ The chat button in the top bar opens a right-side panel built with assistant-ui 
 When you send a message, OpenFit creates a compact context containing normalized metrics, available dates, and details for the selected day. It does not include OAuth credentials or encrypted files. This context is sent to Codex/OpenAI only after you use the chat. Codex may navigate to an OpenFit view or date, but it cannot modify health data.
 
 No Codex model name is hard-coded in this repository. The app-server selects its configured default model unless a model is supplied programmatically through the service options.
+
+## Open Gym and cloud storage
+
+OpenFit can pair with an Open Gym profile and show its saved strength workouts in the **Gym** view,
+alongside Google Health recordings matched by overlapping session times. Clear matches link
+automatically; uncertain ones can be reviewed, linked manually or kept separate. The session keeps
+Open Gym's exercises and sets together with Fitbit's reported heart rate and calories.
+Your VM hosts Open Gym's receiving server alongside the optional OpenFit cloud API. The Android
+app syncs its workout profile to that VM; OpenFit reads it through the cloud API, which also stores
+OpenFit todos, habits, reviewed report details, and source PDFs. Google Health credentials and data
+remain on the desktop. See
+[Open Gym and OpenFit cloud storage](docs/CLOUD_SYNC.md) for VM deployment and pairing.
 
 ## Official references
 

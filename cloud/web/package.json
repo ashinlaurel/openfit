@@ -1,0 +1,1 @@
+{"name":"openfit-private-web","private":true,"type":"module","dependencies":{"@napi-rs/canvas":"1.0.11","@tesseract.js-data/eng":"1.0.0","pdfjs-dist":"6.4.299","tesseract.js":"7.0.0"}}

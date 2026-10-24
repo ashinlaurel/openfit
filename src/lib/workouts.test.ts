@@ -5,6 +5,12 @@ import { collectWorkouts, paceLabel, workoutClock, workoutHeartSeries, workoutMi
 const item=(patch:Partial<ActivityItem>={}):ActivityItem=>({id:'workout-1',name:'Walk',date:'2026-06-22',time:'09:00',durationMinutes:30,calories:null,distanceKm:null,averageHeartRate:null,zoneMinutes:null,steps:null,averagePaceSecondsPerMeter:null,heartZoneMinutes:null,...patch})
 const day=(patch:Partial<DashboardData>={}):DashboardData=>({...createDemoData('2026-06-22'),source:'google-health',generatedAt:'2026-06-22T12:00:00Z',activities:[],workoutCoverage:null,...patch})
 describe('Workout analysis',()=>{
+  it('can include adjacent dates for gym sessions crossing midnight without changing the default Activity period',()=>{
+    const next=item({id:'next',date:'2026-06-23'})
+    const snapshot=day({activities:[next]})
+    expect(collectWorkouts([snapshot],'2026-06-22').activities).toEqual([])
+    expect(collectWorkouts([snapshot],'2026-06-23',30).activities.map(row=>row.id)).toEqual(['next'])
+  })
   it('preserves explicit zero active duration and distinguishes missing duration',()=>{
     expect(workoutMinutes(item({activeDurationMinutes:0,elapsedDurationMinutes:30}))).toBe(0)
     expect(workoutMinutes(item({activeDurationMinutes:null,elapsedDurationMinutes:34}))).toBe(34)

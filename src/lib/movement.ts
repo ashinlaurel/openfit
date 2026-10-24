@@ -44,7 +44,7 @@ export function movementWindow(intervals: MovementInterval[], date: string, time
 }
 export function movementHours(points: TimePoint[]) {
   return Array.from({ length: 24 }, (_, hour) => {
-    const observed = points.filter(point => /^\d{2}:\d{2}/.test(point.time) && Number(point.time.slice(0, 2)) === hour && Number.isFinite(point.value) && point.value >= 0)
+    const observed = points.filter(point => /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(point.time) && Number(point.time.slice(0, 2)) === hour && Number.isFinite(point.value) && point.value >= 0)
     return { hour, steps: observed.length ? observed.reduce((sum, point) => sum + point.value, 0) : null }
   })
 }

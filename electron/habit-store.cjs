@@ -2,7 +2,7 @@
 const crypto = require('node:crypto')
 const COLORS = ['mint', 'blue', 'violet', 'amber', 'rose']
 const ICONS = ['spark', 'book', 'move', 'water', 'moon', 'mind', 'sun', 'leaf']
-function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
+function today() { return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()) }
 function isDate(v) { if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false; const d=new Date(`${v}T12:00:00Z`); return Number.isFinite(d.getTime()) && d.toISOString().slice(0,10)===v }
 function fields(value) {
   if (!value || typeof value.title !== 'string' || !value.title.trim() || value.title.length > 120 || typeof value.note !== 'string' || value.note.length > 1000 || !COLORS.includes(value.color) || !ICONS.includes(value.icon) || !Array.isArray(value.days) || !value.days.length || value.days.length > 7 || value.days.some(d=>!Number.isInteger(d)||d<0||d>6)) throw new Error('Choose a title, color, icon and at least one scheduled day.')

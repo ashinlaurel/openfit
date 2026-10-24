@@ -15,7 +15,10 @@ export function useTodos() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Unable to load tasks.') }
     finally { setLoading(false) }
   }, [])
-  useEffect(() => { void reload() }, [reload])
+  useEffect(() => {
+    void reload()
+    return window.cloud?.onSync(result => { if (result.ok) void reload() })
+  }, [reload])
   const perform = useCallback(async (actions: TodoAction[] | 'import' | 'export' | 'recover') => {
     if (lock.current) return false
     lock.current = true; setBusy(true)

@@ -1,3 +1,4 @@
+import { APP_TIME_ZONE, indiaInstant } from './timezone'
 export function formatNumber(value: number | null, options: Intl.NumberFormatOptions = {}) {
   if (value === null || !Number.isFinite(value)) return '—'
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0, ...options }).format(value)
@@ -35,31 +36,39 @@ export function clampPercent(value: number | null, target: number | null) {
 
 export function formatTime(value: string | null) {
   if (!value) return '—'
-  const date = new Date(value)
+  const date = indiaInstant(value)
   if (Number.isNaN(date.getTime())) return value.slice(11, 16) || value
-  return new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit' }).format(date)
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: APP_TIME_ZONE }).format(date)
 }
 
 export function formatDate(value: string, options: Intl.DateTimeFormatOptions = {}) {
-  const date = new Date(`${value.slice(0, 10)}T12:00:00`)
+  const date = new Date(`${value.slice(0, 10)}T12:00:00+05:30`)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('en-US', options).format(date)
+  return new Intl.DateTimeFormat('en-US', { ...options, timeZone: APP_TIME_ZONE }).format(date)
 }
 
 export function relativeTime(value: string | null) {
   if (!value) return 'Mai'
-  const date = new Date(value)
+  const date = indiaInstant(value)
   if (Number.isNaN(date.getTime())) return value
   const minutes = Math.round((Date.now() - date.getTime()) / 60_000)
   if (minutes < 1) return 'Just now'
   if (minutes < 60) return `${minutes} min ago`
   const hours = Math.round(minutes / 60)
   if (hours < 24) return `${hours} hr ago`
-  return new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short' }).format(date)
+  return new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short', timeZone: APP_TIME_ZONE }).format(date)
 }
 
 export function trendDelta(values: Array<number | null>) {
   const valid = values.filter((value): value is number => value !== null)
   if (valid.length < 2 || valid[0] === 0) return null
   return ((valid.at(-1)! - valid[0]) / valid[0]) * 100
+}
+
+// Format clock labels only; leave dates and duration labels unchanged.
+export function formatClockLabel(value: string) {
+  const match = value.match(/^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/)
+  if (!match || Number(match[1]) > 24 || (Number(match[1]) === 24 && (match[2] !== '00' || Number(match[3] || 0) !== 0))) return value
+  const hour = Number(match[1]) % 24
+  return `${hour % 12 || 12}:${match[2]}${match[3] ? ':' + match[3] : ''} ${hour < 12 ? 'AM' : 'PM'}`
 }

@@ -3,8 +3,8 @@ import type { DashboardData } from '@/types'
 import { normalizeFitbitData } from '@/data/normalize'
 import { collectWorkouts } from './workouts'
 import { offsetDate } from './research-insights'
-export function useWorkoutHistory(data:DashboardData) {
-  const key=`${data.source}:${data.selectedDate}:${data.generatedAt}`
+export function useWorkoutHistory(data:DashboardData,includeAdjacentDays=false) {
+  const key=`${data.source}:${data.selectedDate}:${data.generatedAt}:${includeAdjacentDays}`
   const [history,setHistory]=useState<{key:string;days:DashboardData[];error:boolean}|null>(null)
   useEffect(()=>{
     let cancelled=false
@@ -17,6 +17,8 @@ export function useWorkoutHistory(data:DashboardData) {
     return()=>{cancelled=true}
   },[key,data.source,data.selectedDate])
   const ready=history?.key===key
-  const result=useMemo(()=>collectWorkouts([data,...(ready?history.days.filter(day=>day.selectedDate!==data.selectedDate):[])],data.selectedDate),[data,ready,history])
+  // Gym matching needs a one-day margin: two recordings of a midnight session can
+  // start on different calendar dates. The visible gym period remains 28 days.
+  const result=useMemo(()=>collectWorkouts([data,...(ready?history.days.filter(day=>day.selectedDate!==data.selectedDate):[])],includeAdjacentDays?offsetDate(data.selectedDate,1):data.selectedDate,includeAdjacentDays?30:28),[data,ready,history,includeAdjacentDays])
   return {...result,loading:!ready,error:ready&&history.error,firstDate:offsetDate(data.selectedDate,-27)}
 }

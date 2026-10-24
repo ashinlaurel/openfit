@@ -1,3 +1,4 @@
+import { APP_TIME_ZONE } from '../lib/timezone'
 import { createDemoData } from './demo'
 import { workoutClock } from '../lib/workouts'
 import type {
@@ -158,7 +159,7 @@ function parseActivities(input: unknown, timezone: string | null): ActivityItem[
   const nonNegative = (value: unknown) => { const n = numeric(value); return n !== null && n >= 0 ? n : null }
   return asArray(asObject(input).activities).map((item, index) => {
     const startTime = String(item.startTime ?? item.originalStartTime ?? '')
-    const clock = workoutClock(String(item.localStartTime || startTime), timezone)
+    const clock = workoutClock(String(startTime || item.localStartTime), timezone)
     const extended = item.activeDurationMinutes !== undefined || item.elapsedDurationMinutes !== undefined
     const duration = nonNegative(item.duration ?? item.activeDuration)
     return {
@@ -301,7 +302,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       displayName: String(profile.displayName ?? profile.fullName ?? 'Atleta'),
       avatar: profile.avatar640 ?? profile.avatar150 ?? profile.avatar ?? null,
       memberSince: profile.memberSince ?? null,
-      timezone: profile.timezone ?? null,
+      timezone: APP_TIME_ZONE,
     },
     device: device ? {
       id: device.id ? String(device.id) : null,
@@ -395,7 +396,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
     },
     trends,
     workoutCoverage: typeof e.activities?.coverage?.startDate === 'string' && typeof e.activities?.coverage?.endDate === 'string' ? e.activities.coverage : null,
-    activities: parseActivities(e.activities, profile.timezone ?? null),
+    activities: parseActivities(e.activities, APP_TIME_ZONE),
     insights: buildInsights(activity, heartSummary, sleepRecord, goals),
     sync: {
       endpointCount: payload.requestStats?.total ?? Object.keys(e).length + payload.errors.length,

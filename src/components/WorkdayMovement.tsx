@@ -3,7 +3,7 @@ import { offsetDate } from '@/lib/research-insights'
 import { useState } from 'react'
 import type { DashboardData } from '@/types'
 import { defaultWorkday, movementHours, movementWindow, workdaySettings } from '@/lib/movement'
-import { formatMinutes, formatNumber, relativeTime } from '@/lib/format'
+import { formatClockLabel, formatMinutes, formatNumber, relativeTime } from '@/lib/format'
 import { Panel, PanelHeader } from './Shared'
 import { DurationIcon, StepsIcon } from './icons'
 
@@ -29,7 +29,7 @@ export function WorkdayMovement({ data }: { data: DashboardData }) {
     return { date, ...movementWindow(intervals, date, timezone, settings) }
   })
   const max = Math.max(1, ...known.map(hour => hour.steps!))
-  const clock = (instant: number) => new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit' }).format(instant)
+  const clock = (instant: number) => new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true }).format(instant)
   return <>
     <Panel className="movement-workday" category="activity">
       <div className="movement-workday-head">
@@ -37,8 +37,8 @@ export function WorkdayMovement({ data }: { data: DashboardData }) {
         <span className="movement-source">{data.source === 'demo' ? 'Illustrative sample data' : data.device?.lastSyncTime ? `Device synced ${relativeTime(data.device.lastSyncTime)}` : `Snapshot ${relativeTime(data.generatedAt)}`}</span>
       </div>
       <div className="movement-controls">
-        <label>Workday starts<select aria-label="Workday starts" value={settings.start} onChange={event => { const start = Number(event.target.value); update({ ...settings, start, end: Math.max(settings.end, start + 1) }) }}>{Array.from({length:24}, (_,h) => <option key={h} value={h}>{String(h).padStart(2,'0')}:00</option>)}</select></label>
-        <label>Ends<select aria-label="Workday ends" value={settings.end} onChange={event => update({ ...settings, end: Number(event.target.value) })}>{Array.from({length:24-settings.start}, (_,i) => i+settings.start+1).map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}:00</option>)}</select></label>
+        <label>Workday starts<select aria-label="Workday starts" value={settings.start} onChange={event => { const start = Number(event.target.value); update({ ...settings, start, end: Math.max(settings.end, start + 1) }) }}>{Array.from({length:24}, (_,h) => <option key={h} value={h}>{formatClockLabel(`${h}:00`)}{h === 24 ? ' (next day)' : ''}</option>)}</select></label>
+        <label>Ends<select aria-label="Workday ends" value={settings.end} onChange={event => update({ ...settings, end: Number(event.target.value) })}>{Array.from({length:24-settings.start}, (_,i) => i+settings.start+1).map(h => <option key={h} value={h}>{formatClockLabel(`${h}:00`)}{h === 24 ? ' (next day)' : ''}</option>)}</select></label>
         <label>Long stretch<select aria-label="Long stretch threshold" value={settings.threshold} onChange={event => update({...settings, threshold:Number(event.target.value)})}>{[30,45,60].map(m => <option key={m} value={m}>{m}+ minutes</option>)}</select></label>
         <span className="movement-timezone">{timezone}</span>
       </div>
@@ -58,8 +58,8 @@ export function WorkdayMovement({ data }: { data: DashboardData }) {
     </Panel>
     <Panel className="movement-distribution" category="activity">
       <PanelHeader eyebrow="Across the day" title="Every hour tells a story" icon={StepsIcon} />
-      <div className="movement-hour-summary"><span><strong>{known.length ? moving.length : '—'}</strong> hours with recorded steps <small>of {known.length} hours containing records</small></span><span><DurationIcon />{peak ? `Busiest hour ${String(peak.hour).padStart(2,'0')}:00 · ${formatNumber(peak.steps)} steps` : 'No movement peak available'}</span></div>
-      <div className="movement-hour-grid">{hours.map(hour => <div key={hour.hour} className={`movement-hour ${hour.steps === null ? 'is-missing' : ''}`} style={hour.steps === null ? {} : {background:`color-mix(in srgb, var(--category-activity) ${8+hour.steps/max*60}%, var(--surface-raised, #171e1d))`}} title={`${String(hour.hour).padStart(2,'0')}:00 · ${hour.steps === null ? 'No records' : `${formatNumber(hour.steps)} steps`}`}><span>{String(hour.hour).padStart(2,'0')}</span><strong>{hour.steps === null ? '—' : formatNumber(hour.steps)}</strong></div>)}</div>
+      <div className="movement-hour-summary"><span><strong>{known.length ? moving.length : '—'}</strong> hours with recorded steps <small>of {known.length} hours containing records</small></span><span><DurationIcon />{peak ? `Busiest hour ${formatClockLabel(`${peak.hour}:00`)} · ${formatNumber(peak.steps)} steps` : 'No movement peak available'}</span></div>
+      <div className="movement-hour-grid">{hours.map(hour => <div key={hour.hour} className={`movement-hour ${hour.steps === null ? 'is-missing' : ''}`} style={hour.steps === null ? {} : {background:`color-mix(in srgb, var(--category-activity) ${8+hour.steps/max*60}%, var(--surface-raised, #171e1d))`}} title={`${formatClockLabel(`${hour.hour}:00`)} · ${hour.steps === null ? 'No records' : `${formatNumber(hour.steps)} steps`}`}><span>{formatClockLabel(`${hour.hour}:00`)}</span><strong>{hour.steps === null ? '—' : formatNumber(hour.steps)}</strong></div>)}</div>
       <p className="movement-method">Hour labels use the provider’s local clock. “—” means no step records; 0 means an explicitly recorded zero. An hour with steps is not a full hour of activity.</p>
     </Panel>
     <Panel className="movement-week" category="activity">

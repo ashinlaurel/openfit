@@ -14,12 +14,27 @@ contextBridge.exposeInMainWorld('fitbit', Object.freeze({
   connect: () => ipcRenderer.invoke('fitbit:connect'),
   disconnect: () => ipcRenderer.invoke('fitbit:disconnect'),
   sync: (date) => ipcRenderer.invoke('fitbit:sync', date),
-  getCachedData: () => ipcRenderer.invoke('fitbit:get-cached-data'),
+  getCachedData: date => ipcRenderer.invoke('fitbit:get-cached-data', date),
   getCachedArchive: () => ipcRenderer.invoke('fitbit:get-cached-archive'),
   exportData: () => ipcRenderer.invoke('fitbit:export-data'),
   openExternal: (url) => ipcRenderer.invoke('fitbit:open-external', url),
   onAuthComplete: (callback) => subscribe('fitbit:auth-complete', callback),
   onSyncProgress: (callback) => subscribe('fitbit:sync-progress', callback),
+}))
+
+contextBridge.exposeInMainWorld('cloud', Object.freeze({
+  getStatus: () => ipcRenderer.invoke('cloud:get-status'),
+  pair: (apiUrl, code) => ipcRenderer.invoke('cloud:pair', apiUrl, code),
+  disconnect: () => ipcRenderer.invoke('cloud:disconnect'),
+  getOpenGym: () => ipcRenderer.invoke('cloud:get-open-gym'),
+  getWorkoutLinks: () => ipcRenderer.invoke('cloud:get-workout-links'),
+  saveWorkoutLink: input => ipcRenderer.invoke('cloud:save-workout-link', input),
+  getArchive: () => ipcRenderer.invoke('cloud:get-archive'),
+  saveArchive: (archive, baseRev) => ipcRenderer.invoke('cloud:save-archive', archive, baseRev),
+  getPdf: hash => ipcRenderer.invoke('cloud:get-pdf', hash),
+  savePdf: (hash, base64) => ipcRenderer.invoke('cloud:save-pdf', hash, base64),
+  deletePdf: hash => ipcRenderer.invoke('cloud:delete-pdf', hash),
+  onSync: callback => subscribe('cloud:sync-result', callback),
 }))
 
 contextBridge.exposeInMainWorld('healthAssistant', Object.freeze({

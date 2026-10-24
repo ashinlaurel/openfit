@@ -1,0 +1,47 @@
+{
+	# Certificates and keys live in the persistent /data mount.
+	admin off
+}
+
+{$GYM_HOST} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+		X-Frame-Options DENY
+	}
+	# Route API calls directly so the API receives the actual client address.
+	handle /api/* {
+		reverse_proxy gym-api:3000 {
+			header_up -CF-Connecting-IP
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+	handle {
+		reverse_proxy gym-web:80
+	}
+}
+
+{$OPENFIT_HOST} {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+	}
+	reverse_proxy openfit-cloud:3100 {
+		header_up -CF-Connecting-IP
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+fit.129-225-66-175.sslip.io {
+	encode zstd gzip
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		X-Frame-Options DENY
+	}
+	reverse_proxy openfit-web:3200
+}

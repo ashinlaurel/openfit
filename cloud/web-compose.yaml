@@ -1,0 +1,18 @@
+services:
+  openfit-web:
+    build:
+      context: ..
+      dockerfile: cloud/web/Dockerfile
+    restart: unless-stopped
+    env_file: web.env
+    environment:
+      STORAGE_KEY: ${STORAGE_KEY:?Existing storage key required}
+    volumes:
+      - ../data/web:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    mem_limit: 512m

@@ -1,15 +1,13 @@
+import { indiaDate, APP_TIME_ZONE } from '../lib/timezone'
 import type { ActivityItem, DashboardData, SleepStage, SleepStageKey, SleepStageSegment, TimePoint, TrendPoint } from '../types'
 
 const dayMs = 86_400_000
 
-function localIso(date = new Date()) {
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 10)
-}
+const localIso = indiaDate
 
 function dateFromIso(value: string) {
   const [year, month, day] = value.split('-').map(Number)
-  return new Date(year, month - 1, day, 12)
+  return new Date(Date.UTC(year, month - 1, day, 12))
 }
 
 function seeded(index: number, salt: number) {
@@ -18,7 +16,7 @@ function seeded(index: number, salt: number) {
 
 function makeTrends(selectedDate: string): TrendPoint[] {
   const end = dateFromIso(selectedDate)
-  const formatter = new Intl.DateTimeFormat('en-US', { weekday: 'short' })
+  const formatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: APP_TIME_ZONE })
   return Array.from({ length: 14 }, (_, index) => {
     const date = new Date(end.getTime() - (13 - index) * dayMs)
     const activityWave = Math.sin(index * 0.9) * 1_350
@@ -156,7 +154,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       displayName: 'Flavio',
       avatar: null,
       memberSince: '2021-03-12',
-      timezone: 'Europe/Rome',
+      timezone: APP_TIME_ZONE,
     },
     device: {
       id: 'demo-tracker',

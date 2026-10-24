@@ -15,6 +15,8 @@ const habitStore = require('./habit-store.cjs')
 const readerStore = require('./reader-store.cjs')
 const readerService = require('./reader-service.cjs')
 const reportStore = require('./report-store.cjs')
+const cloudService = require('./cloud-service.cjs')
+const workoutLinks = require('./workout-links.cjs')
 const { Worker } = require('node:worker_threads')
 const { createCodexService, resolveCodexBinary } = require('./codex-service.cjs')
 
@@ -37,6 +39,9 @@ let oauthServer = null
 let oauthTimeout = null
 let credentialFile = null
 let cacheFile = null
+let cloudFile = null
+let gymCacheFile = null
+let workoutLinksFile = null
 let todoFile = null
 let habitFile = null
 let readerFile = null
@@ -47,6 +52,7 @@ let reportQueue = Promise.resolve()
 let reportWorker = null
 let reportAssistant = null
 const reportDrafts = new Map()
+let cloudWriteQueue = Promise.resolve()
 let syncInFlight = null
 let codexService = null
 let assistantRequestId = null
@@ -104,6 +110,13 @@ function getCredentials() {
     token: null,
     lastSyncAt: null,
   })
+}
+
+function getCloudCredentials() { return readSecure(cloudFile, null) }
+
+function publicCloudStatus(value) {
+  const config = value || getCloudCredentials()
+  return { configured: Boolean(config?.apiUrl && config?.token), apiUrl: config?.apiUrl || '', user: config?.user ? { id: config.user.id || '', name: config.user.name || '' } : null }
 }
 
 function saveCredentials(credentials) {
@@ -253,13 +266,28 @@ async function validAccessToken(credentials) {
   return updated
 }
 
+let warmingHealthWeek = false
+function queueHealthSync(date) {
+  const job = (syncInFlight || Promise.resolve()).catch(() => {}).then(() => syncData(date))
+  syncInFlight = job
+  void job.finally(() => { if (syncInFlight === job) syncInFlight = null }).catch(() => {})
+  return job
+}
+async function warmHealthWeek() {
+  if (warmingHealthWeek) return
+  warmingHealthWeek = true
+  try {
+    for (const date of healthCache.recentMissingDates(readSecure(cacheFile, null), localIsoDate())) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      if (healthCache.recentMissingDates(readSecure(cacheFile, null), localIsoDate()).includes(date)) await queueHealthSync(date)
+    }
+  } catch { /* Keep completed snapshots and retry missing days after the next sync. */ }
+  finally { warmingHealthWeek = false }
+}
+
 async function syncData(date) {
-  const today = localIsoDate()
-  const archive = readSecure(cacheFile, null)
-  if (date < today) {
-    const cached = healthCache.cachedDay(archive, date)
-    if (cached) return { ...cached, cacheHit: true }
-  }
+  // An explicit sync must query the provider even for past days: device data
+  // can arrive later. Startup/offline reads still use the encrypted archive.
 
   let credentials = getCredentials()
   credentials = await validAccessToken(credentials)
@@ -278,7 +306,8 @@ async function syncData(date) {
   if (!total || succeeded < minimumUsefulResponses || !hasMeasurementResponse) {
     throw new Error('The sync did not return enough valid sources. The previous cache was preserved.')
   }
-  writeSecure(cacheFile, healthCache.storeDay(archive, payload))
+  if (getCredentials().token?.access_token !== credentials.token.access_token) throw new Error('Health connection changed during sync.')
+  writeSecure(cacheFile, healthCache.storeDay(readSecure(cacheFile, null), payload))
   credentials.lastSyncAt = payload.generatedAt
   saveCredentials(credentials)
   return payload
@@ -348,7 +377,7 @@ function validSyncDate(value) {
 }
 
 function localIsoDate(now = new Date()) {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
 }
 
 function createWindow() {
@@ -415,6 +444,7 @@ function saveTodos(next, purge = false) {
   const current = readTodos()
   writeSecure(todoFile + '.backup', purge ? next : current)
   writeSecure(todoFile, next)
+  scheduleCloudArchiveSync()
   return next
 }
 
@@ -466,6 +496,7 @@ function writeReports(next) {
   const current = readReports()
   writeSecure(reportFile + '.backup', current)
   writeSecure(reportFile, next)
+  scheduleCloudArchiveSync()
   return next
 }
 function queueReports(run) {
@@ -491,6 +522,83 @@ function reportPdf(hash) {
   const bytes = Buffer.from(payload.pdf, 'base64')
   if (crypto.createHash('sha256').update(bytes).digest('hex') !== hash) throw new Error('The saved PDF did not pass its integrity check.')
   return bytes
+}
+function mergeCloudRows(localRows, remoteRows, key) {
+  const merged = new Map((remoteRows || []).map(item => [key(item), item]))
+  for (const item of localRows || []) {
+    const id = key(item), current = merged.get(id)
+    if (!current || String(item.updatedAt || item.importedAt || '') >= String(current.updatedAt || current.importedAt || '')) merged.set(id, item)
+  }
+  return [...merged.values()]
+}
+function mergeCloudArchive(local, remote) {
+  return {
+    version: 1,
+    todos: { version: 1, tasks: mergeCloudRows(local.todos.tasks, remote.todos.tasks, item => item.id) },
+    habits: { version: 1, habits: mergeCloudRows(local.habits.habits, remote.habits.habits, item => item.id) },
+    reports: {
+      version: 1,
+      reports: mergeCloudRows(local.reports.reports, remote.reports.reports, item => item.hash),
+      referenceDefaults: { ...(remote.reports.referenceDefaults || {}), ...(local.reports.referenceDefaults || {}) },
+    },
+  }
+}
+function persistCloudArchiveLocally(archive) {
+  todoStore.validateStore(archive.todos)
+  habitStore.validateStore(archive.habits)
+  reportStore.validateStore(archive.reports)
+  writeSecure(todoFile + '.backup', readTodos())
+  writeSecure(habitFile + '.backup', readHabits())
+  writeSecure(reportFile + '.backup', readReports())
+  writeSecure(todoFile, archive.todos)
+  writeSecure(habitFile, archive.habits)
+  writeSecure(reportFile, archive.reports)
+}
+async function syncCloudArchive() {
+  const config = getCloudCredentials()
+  if (!config?.token) return false
+  const local = { version: 1, todos: readTodos(), habits: readHabits(), reports: readReports() }
+  let remote = await cloudService.readArchive(config), merged, saved
+  for (let attempt = 0; attempt < 3; attempt++) {
+    merged = mergeCloudArchive(local, remote.archive)
+    const remoteReportHashes = new Set((remote.archive.reports.reports || []).map(item => item.hash))
+    for (const report of merged.reports.reports) {
+      const assetPath = path.join(reportPdfDirectory, report.hash + '.secure.json')
+      if (fs.existsSync(assetPath)) {
+        const source = readSecure(assetPath)
+        if (typeof source?.pdf === 'string') {
+          const bytes = Buffer.from(source.pdf, 'base64')
+          if (crypto.createHash('sha256').update(bytes).digest('hex') !== report.hash) throw new Error(`Saved report ${report.fileName} failed its integrity check.`)
+          if (!remoteReportHashes.has(report.hash)) await cloudService.putPdf(config, report.hash, bytes)
+        }
+      } else if (remoteReportHashes.has(report.hash)) {
+        try {
+          const bytes = await cloudService.getPdf(config, report.hash)
+          if (crypto.createHash('sha256').update(bytes).digest('hex') === report.hash) writeSecure(assetPath, { pdf: bytes.toString('base64') })
+        } catch (error) { console.warn('A cloud report index has no downloadable PDF.', report.hash, error.message) }
+      }
+    }
+    try { saved = await cloudService.writeArchive(config, merged, remote.rev || 0); break }
+    catch (error) {
+      if (error.status !== 409 || attempt === 2) throw error
+      remote = await cloudService.readArchive(config)
+    }
+  }
+  if (!saved || !merged) throw new Error('OpenFit cloud sync could not reconcile the latest archive.')
+  // Edits can happen while network requests are in flight. Preserve those newer rows.
+  persistCloudArchiveLocally(mergeCloudArchive({ version: 1, todos: readTodos(), habits: readHabits(), reports: readReports() }, merged))
+  writeSecure(cloudFile, config)
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cloud:sync-result', { ok: true, at: new Date().toISOString(), rev: saved.rev })
+  return true
+}
+function scheduleCloudArchiveSync() {
+  const operation = cloudWriteQueue.then(syncCloudArchive)
+  cloudWriteQueue = operation.catch(error => {
+    console.warn('OpenFit cloud sync failed; local encrypted data was retained.', error)
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cloud:sync-result', { ok: false, error: error.message })
+    return false
+  })
+  return cloudWriteQueue
 }
 function runReportPdf(bytes, action = 'extract', page = 1, forceOcr = false) {
   return new Promise((resolve, reject) => {
@@ -589,7 +697,7 @@ function registerIpc() {
     const backup = reportStore.validateStore(readSecure(reportFile + '.backup'))
     const choice = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['Cancel', 'Restore backup'], defaultId: 0, cancelId: 0, message: 'Restore the previous saved report index?', detail: 'Result edits since that version will be replaced. Encrypted source PDFs remain stored.' })
     if (choice.response !== 1) return readReports()
-    writeSecure(reportFile, backup); return backup
+    writeSecure(reportFile, backup); scheduleCloudArchiveSync(); return backup
   }))
   trustedHandle('reader:load', () => readReader())
   trustedHandle('reader:mutate', action => queueReader(() => {
@@ -646,6 +754,7 @@ function registerIpc() {
     const next = habitStore.mutate(current, action)
     writeSecure(habitFile + '.backup', current)
     writeSecure(habitFile, next)
+    scheduleCloudArchiveSync()
     return next
   })
   trustedHandle('habits:export', async () => {
@@ -658,6 +767,7 @@ function registerIpc() {
     const choice = await dialog.showMessageBox(mainWindow, { type: 'warning', buttons: ['Cancel', 'Restore backup'], defaultId: 0, cancelId: 0, message: 'Restore the previous saved habit store?', detail: 'Check-ins and changes after that version will be replaced.' })
     if (choice.response !== 1) return readHabits()
     writeSecure(habitFile, backup)
+    scheduleCloudArchiveSync()
     return backup
   })
   trustedHandle('todos:load', () => readTodos())
@@ -701,7 +811,11 @@ function registerIpc() {
     return saveTodos(next)
   })
   trustedHandle('fitbit:get-status', () => publicStatus())
-  trustedHandle('fitbit:get-cached-data', () => healthCache.latestDay(readSecure(cacheFile, null)))
+  trustedHandle('fitbit:get-cached-data', date => {
+    if (date !== undefined && !validSyncDate(String(date))) throw new Error('Invalid cache date.')
+    const archive = readSecure(cacheFile, null)
+    return date === undefined ? healthCache.latestDay(archive) : healthCache.cachedDay(archive, date)
+  })
   trustedHandle('fitbit:get-cached-archive', () => healthCache.normalizeArchive(readSecure(cacheFile, null)))
   trustedHandle('fitbit:save-config', (input) => {
     if (syncInFlight) throw new Error('Wait for the sync to finish before changing the configuration.')
@@ -736,13 +850,9 @@ function registerIpc() {
   })
   trustedHandle('fitbit:sync', async (date) => {
     if (!validSyncDate(String(date))) throw new Error('Invalid sync date.')
-    if (syncInFlight) throw new Error('A sync is already in progress.')
-    syncInFlight = syncData(String(date))
-    try {
-      return await syncInFlight
-    } finally {
-      syncInFlight = null
-    }
+    const result = await queueHealthSync(String(date))
+    void warmHealthWeek()
+    return result
   })
   trustedHandle('fitbit:export-data', async () => {
     const cached = healthCache.normalizeArchive(readSecure(cacheFile, null))
@@ -760,6 +870,87 @@ function registerIpc() {
     const url = new URL(String(value))
     if (url.protocol !== 'https:') throw new Error('Only HTTPS links are allowed.')
     return shell.openExternal(url.toString())
+  })
+  trustedHandle('cloud:get-status', async () => {
+    const config = getCloudCredentials()
+    const result = await cloudService.status(config)
+    if (result.config && result.config.token !== config?.token) writeSecure(cloudFile, result.config)
+    return { ...publicCloudStatus(result.config || config), ...(result.error ? { error: result.error } : {}) }
+  })
+  trustedHandle('cloud:pair', async (apiUrl, code) => {
+    const config = await cloudService.pair(apiUrl, code)
+    writeSecure(cloudFile, config)
+    await scheduleCloudArchiveSync()
+    return publicCloudStatus(config)
+  })
+  trustedHandle('cloud:disconnect', async () => {
+    await cloudWriteQueue
+    deleteIfPresent(cloudFile)
+    deleteIfPresent(gymCacheFile)
+    return { configured: false, apiUrl: '', user: null }
+  })
+  trustedHandle('cloud:get-open-gym', async () => {
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect Open Gym in Settings first.')
+    try {
+      const result = await cloudService.openGym(config)
+      const snapshot = { state: result.state, rev: result.rev, exerciseNames: result.exerciseNames, syncedAt: new Date().toISOString() }
+      writeSecure(cloudFile, config)
+      writeSecure(gymCacheFile, { ...snapshot, apiUrl: config.apiUrl, uid: config.user?.id })
+      return { ...snapshot, fromCache: false }
+    } catch (error) {
+      if (error.status === 401 || error.status === 403) throw error
+      const cached = readSecure(gymCacheFile, null)
+      if (!cached || cached.apiUrl !== config.apiUrl || cached.uid !== config.user?.id) throw error
+      return { state: cached.state, rev: cached.rev, exerciseNames: cached.exerciseNames, syncedAt: cached.syncedAt, fromCache: true, syncError: error.message }
+    }
+  })
+  trustedHandle('cloud:get-workout-links', () => {
+    return workoutLinks.read(readSecure(workoutLinksFile, null), getCloudCredentials())
+  })
+  trustedHandle('cloud:save-workout-link', input => {
+    const next = workoutLinks.update(readSecure(workoutLinksFile, null), getCloudCredentials(), input)
+    writeSecure(workoutLinksFile, next.store)
+    return next.links
+  })
+  trustedHandle('cloud:get-archive', async () => {
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect Open Gym in Settings first.')
+    const result = await cloudService.readArchive(config)
+    writeSecure(cloudFile, config)
+    return result
+  })
+  trustedHandle('cloud:save-archive', async (archive, baseRev) => {
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect Open Gym in Settings first.')
+    if (!archive || typeof archive !== 'object' || !Number.isSafeInteger(baseRev) || baseRev < 0 || Buffer.byteLength(JSON.stringify(archive)) > 40 * 1024 * 1024) throw new Error('Invalid cloud archive.')
+    const result = await cloudService.writeArchive(config, archive, baseRev)
+    writeSecure(cloudFile, config)
+    return result
+  })
+  trustedHandle('cloud:get-pdf', async hash => {
+    if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid report PDF reference.')
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect Open Gym in Settings first.')
+    const result = await cloudService.getPdf(config, hash)
+    writeSecure(cloudFile, config)
+    return result.toString('base64')
+  })
+  trustedHandle('cloud:save-pdf', async (hash, encoded) => {
+    if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash) || typeof encoded !== 'string' || encoded.length > 28 * 1024 * 1024) throw new Error('Invalid report PDF upload.')
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect Open Gym in Settings first.')
+    const result = await cloudService.putPdf(config, hash, Buffer.from(encoded, 'base64'))
+    writeSecure(cloudFile, config)
+    return result
+  })
+  trustedHandle('cloud:delete-pdf', async hash => {
+    if (typeof hash !== 'string' || !/^[a-f0-9]{64}$/.test(hash)) throw new Error('Invalid report PDF reference.')
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect Open Gym in Settings first.')
+    const result = await cloudService.deletePdf(config, hash)
+    writeSecure(cloudFile, config)
+    return result
   })
   trustedHandle('assistant:get-status', () => {
     const status = codexService?.getStatus() || {}
@@ -826,6 +1017,9 @@ app.whenReady().then(() => {
   app.setPath('userData', userData)
   credentialFile = path.join(userData, 'credentials.secure.json')
   cacheFile = path.join(userData, 'health-cache.secure.json')
+  cloudFile = path.join(userData, 'openfit-cloud.secure.json')
+  gymCacheFile = path.join(userData, 'open-gym-cache.secure.json')
+  workoutLinksFile = path.join(userData, 'workout-links.secure.json')
   todoFile = path.join(userData, 'todos.secure.json')
   habitFile = path.join(userData, 'habits.secure.json')
   readerFile = path.join(userData, 'reader.secure.json')
@@ -846,6 +1040,7 @@ app.whenReady().then(() => {
   }
   registerIpc()
   createWindow()
+  void scheduleCloudArchiveSync()
 })
 
 app.on('activate', () => {

@@ -6,7 +6,8 @@
 - Google Health API v4 as the primary provider, with the legacy Fitbit Web API isolated as a fallback.
 - No tokens or secrets in the renderer.
 - Partial consent and missing sensors must not block the dashboard.
-- Encrypted per-day health archive and no upload to OpenFit services. Completed days are read locally without new provider requests. If `safeStorage` is unavailable, or Linux selects the unencrypted `basic_text` backend, saving fails explicitly.
+- Google Health OAuth credentials and health cache stay on the desktop. Completed days are read locally without new provider requests. If `safeStorage` is unavailable, or Linux selects the unencrypted `basic_text` backend, saving fails explicitly.
+- Optional Open Gym pairing uses the user's Open Gym profile as the identity for encrypted cloud storage of OpenFit todos, habits, report metadata, and PDF files. Open Gym workout data remains in Open Gym's own profile document.
 - One normalization layer, so views do not depend on remote API shapes.
 - Optional chat through Codex app-server. The project contains no API key, and no health data is sent until the user sends a message.
 
@@ -22,6 +23,9 @@ flowchart LR
     FBA --> Contract
     Contract --> Main["Electron main"]
     Main -->|safeStorage| Cache["Encrypted local cache"]
+    Main -->|Open Gym bearer in safeStorage| CloudAPI["OpenFit cloud API"]
+    CloudAPI -->|validates token and reads profile| GymAPI["Open Gym API"]
+    CloudAPI -->|AES-256-GCM files| CloudArchive["VM archive: todos, habits, reports, PDFs"]
     Main -->|IPC allowlist| Preload["contextBridge"]
     Preload --> Renderer["React renderer"]
     Renderer -->|Compact health context on request| Preload
@@ -39,6 +43,7 @@ The main process is the only process allowed to:
 - know the Client Secret, access token, and refresh token;
 - call `health.googleapis.com` and `api.fitbit.com`;
 - read and write cache and credentials;
+- use the Open Gym pairing token to fetch workouts and sync the user's OpenFit archive;
 - open external URLs and export files only after explicit user action;
 - start Codex app-server and forward only the compact health context prepared for the turn.
 
@@ -53,6 +58,21 @@ The renderer runs with `nodeIntegration: false`, `contextIsolation: true`, and s
 ### Codex Bridge
 
 `codex-service.cjs` resolves the Codex Desktop executable, starts `codex app-server` over stdio, and reuses the local authentication. Every thread uses `read-only`, `approvalPolicy: never`, and disabled network access for tools. Shell, patch, permission, input, and tool requests are denied by the client. Fitbit and Google OAuth credentials never enter the model context.
+
+### OpenFit Cloud API
+
+The cloud API validates each Open Gym bearer token against the configured Open Gym server before
+serving data. It does not persist that bearer token or accept Google Health payloads. Todo, habit,
+and report archives and report PDFs are encrypted with AES-256-GCM on the VM using a deployment
+key. HTTPS terminates at the reverse proxy. The client keeps its Open Gym token in Electron's
+`safeStorage` and keeps encrypted local copies for offline use.
+
+The Gym view combines the read-only Open Gym profile with cached Google Health workout windows
+through `src/lib/gym-sync.ts`. Matching uses absolute time overlap and a unique candidate on both
+sides. Manual overrides and unlink decisions are stored through narrow preload methods in an
+encrypted, account-scoped local file. They do not write to either workout source. Exercise names
+are supplied as read-only catalogue metadata by the cloud API. Heart-rate graphs select samples
+inside the gym session; the original Fitbit calories and average heart rate retain their provenance.
 
 ## Provider Contract
 

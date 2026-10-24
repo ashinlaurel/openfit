@@ -7,7 +7,7 @@ export interface AssistantNavigation {
 }
 
 const navigationPattern = /\s*<!--\s*openfit:navigate\s+(\{[\s\S]*?\})\s*-->\s*/g
-const validPages = new Set<PageId>(['today', 'movement', 'activity', 'health', 'sleep', 'body', 'devices', 'todos', 'habits', 'reader', 'reports', 'drinking'])
+const validPages = new Set<PageId>(['today', 'movement', 'activity', 'gym', 'health', 'sleep', 'body', 'devices', 'todos', 'habits', 'reader', 'reports', 'drinking'])
 
 function validIsoDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false

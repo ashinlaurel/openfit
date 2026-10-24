@@ -1,5 +1,6 @@
+import { webMode, emptyWebHealth } from '@/lib/web-bridge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { ChevronsUpDown, LoaderCircle, RefreshCw, MessageCircle, Search, ListTodo, Flame, BookOpen, Rss, Bookmark, FileHeart, FileUp, Wine } from 'lucide-react'
+import { ChevronsUpDown, LoaderCircle, RefreshCw, MessageCircle, Search, ListTodo, Flame, BookOpen, Rss, Bookmark, FileHeart, FileUp, Wine, Dumbbell } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,7 +31,8 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { DashboardData, FitbitAuthStatus, FitbitConfigInput, HealthProvider, PageId } from '@/types'
+import type { CloudStatus, DashboardData, FitbitAuthStatus, FitbitConfigInput, HealthProvider, PageId } from '@/types'
+import { DEFAULT_CLOUD_API } from '@/lib/cloud-config'
 import { createDemoData, localIso } from '@/data/demo'
 import { normalizeFitbitData } from '@/data/normalize'
 import { formatDate, relativeTime } from '@/lib/format'
@@ -44,6 +46,7 @@ import { ReaderView } from '@/components/ReaderView'
 import { useReader } from '@/lib/use-reader'
 import { DrinkingView } from '@/components/DrinkingView'
 import { ReportsView } from '@/components/ReportsView'
+import { GymView } from '@/components/GymView'
 import { useReports } from '@/lib/use-reports'
 import type { TodoAction } from '@/types'
 import { CommandPalette, type PaletteCommand } from '@/components/CommandPalette'
@@ -79,6 +82,7 @@ const navItems: Array<{ id: PageId; label: string; copy: string; icon: AppIcon; 
   { id: 'today', label: 'Today', copy: 'The day’s essential overview.', icon: TodayIcon, category: 'summary' },
   { id: 'movement', label: 'Movement', copy: 'Steps, daily movement, and your workday rhythm.', icon: StepsIcon, category: 'activity' },
   { id: 'activity', label: 'Activity', copy: 'Workout sessions, training time, and exercise details.', icon: ActivityIcon, category: 'activity' },
+  { id: 'gym', label: 'Gym', copy: 'Strength workouts synced from Open Gym.', icon: Dumbbell, category: 'activity' },
   { id: 'health', label: 'Health', copy: 'Cardiac and physiological signals over time.', icon: HeartIcon, category: 'heart' },
   { id: 'sleep', label: 'Sleep', copy: 'Duration, quality, and composition of your latest night’s sleep.', icon: SleepIcon, category: 'sleep' },
   { id: 'body', label: 'Body', copy: 'Weight, composition, and daily balance.', icon: BodyIcon, category: 'body' },
@@ -116,7 +120,7 @@ interface SyncProgressState {
 
 function shiftDate(value: string, days: number) {
   const [year, month, day] = value.split('-').map(Number)
-  return localIso(new Date(year, month - 1, day + days, 12))
+  return new Date(Date.UTC(year, month - 1, day + days, 12)).toISOString().slice(0, 10)
 }
 
 function IconButton({ label, children, ...props }: { label: string; children: ReactNode } & React.ComponentProps<typeof Button>) {
@@ -140,8 +144,9 @@ export default function App() {
   const [proposals, setProposals] = useState<TodoAction[]>([])
   const [page, setPage] = useState<PageId>('today')
   const [selectedDate, setSelectedDate] = useState(localIso())
-  const [data, setData] = useState<DashboardData>(() => createDemoData())
+  const [data, setData] = useState<DashboardData>(() => webMode ? normalizeFitbitData(emptyWebHealth()) : createDemoData())
   const [status, setStatus] = useState(defaultStatus)
+  const [cloudStatus, setCloudStatus] = useState<CloudStatus>({ configured: false, apiUrl: '', user: null })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -156,6 +161,9 @@ export default function App() {
     window.addEventListener('keydown', handleShortcut, true)
     return () => window.removeEventListener('keydown', handleShortcut, true)
   }, [])
+  useEffect(() => window.cloud?.onSync(result => {
+    if (!result.ok && result.error) setToast({ tone: 'error', message: `Cloud save failed: ${result.error}` })
+  }), [])
   const [syncing, setSyncing] = useState(false)
   const [syncTargetDate, setSyncTargetDate] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
@@ -179,20 +187,26 @@ export default function App() {
     dataDateRef.current = data.selectedDate
   }, [data.selectedDate])
 
+  const startupLoaded = useRef(false)
   const loadNativeState = useCallback(async () => {
-    if (!window.fitbit) return
+    if (!window.fitbit) return false
+    const startingDate = selectedDateRef.current
+    // Render the cache as soon as it arrives, independently of cloud pairing.
+    const cached = window.fitbit.getCachedData(startingDate).then(payload => {
+      if (!payload || payload.date !== startingDate || selectedDateRef.current !== startingDate) return
+      const normalized = normalizeFitbitData(payload)
+      dataDateRef.current = normalized.selectedDate
+      setData({ ...normalized, source: 'cache' })
+    }).catch(() => undefined)
+    void window.cloud?.getStatus().then(setCloudStatus).catch(() => undefined)
     try {
-      const [nextStatus, cached] = await Promise.all([window.fitbit.getStatus(), window.fitbit.getCachedData()])
+      const nextStatus = await window.fitbit.getStatus()
       setStatus(nextStatus)
-      if (cached) {
-        const normalized = normalizeFitbitData(cached)
-        dataDateRef.current = normalized.selectedDate
-        selectedDateRef.current = normalized.selectedDate
-        setData({ ...normalized, source: 'cache' })
-        setSelectedDate(normalized.selectedDate)
-      }
+      await cached
+      return nextStatus.connected
     } catch (error) {
       setToast({ tone: 'error', message: error instanceof Error ? error.message : 'Unable to read the local status.' })
+      return false
     }
   }, [])
 
@@ -244,8 +258,11 @@ export default function App() {
           const hasDifferentDateQueued = Boolean(queuedDate && queuedDate !== date)
 
           if (failedDateIsStillSelected && !hasDifferentDateQueued) {
-            selectedDateRef.current = dataDateRef.current
-            setSelectedDate(dataDateRef.current)
+            // A failed refresh must not move the calendar back to an older day.
+            if (dataDateRef.current !== date) {
+              dataDateRef.current = date
+              setData(normalizeFitbitData(emptyWebHealth(date)))
+            }
             setToast({ tone: 'error', message: error instanceof Error ? error.message : 'Sync failed.' })
           }
         }
@@ -265,7 +282,10 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    void loadNativeState()
+    if (!startupLoaded.current) {
+      startupLoaded.current = true
+      void loadNativeState().then(connected => { if (connected) void runSync() })
+    }
     if (!window.fitbit) return
     const unsubscribeAuth = window.fitbit.onAuthComplete(async (result) => {
       setConnecting(false)
@@ -293,13 +313,30 @@ export default function App() {
   }, [loadNativeState, runSync])
 
   useEffect(() => {
+    let active = true
+    // Settings can be provisioned by the local setup tools while the app is open.
+    // Refresh connection flags on return without changing the selected health date.
+    const refreshConnections = async () => {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const [nextHealth, nextCloud] = await Promise.all([window.fitbit?.getStatus(), window.cloud?.getStatus()])
+        if (!active) return
+        if (nextHealth) setStatus(nextHealth)
+        if (nextCloud) setCloudStatus(nextCloud)
+      } catch { /* A source view provides retry and offline status. */ }
+    }
+    window.addEventListener('focus', refreshConnections)
+    return () => { active = false; window.removeEventListener('focus', refreshConnections) }
+  }, [])
+
+  useEffect(() => {
     if (!toast) return
     if (toast.tone === 'error') return
     const timer = window.setTimeout(() => setToast(null), 4_500)
     return () => window.clearTimeout(timer)
   }, [toast])
 
-  const visibleNav = navItems
+  const visibleNav = webMode ? navItems.filter(item => item.id !== 'reader') : navItems
 
   const changeDate = (date: string) => {
     if (!date || date > localIso()) return
@@ -311,7 +348,16 @@ export default function App() {
       setData(demoData)
       return
     }
-    if (status.connected) void runSync(date)
+    if (status.connected) {
+      void window.fitbit?.getCachedArchive().then(archive => {
+        const cached = archive.days[date]
+        if (cached && selectedDateRef.current === date && !syncingRef.current) {
+          const normalized = normalizeFitbitData(cached)
+          dataDateRef.current = date
+          setData({ ...normalized, source: 'cache' })
+        }
+      }).catch(() => undefined).finally(() => { if (selectedDateRef.current === date) void runSync(date) })
+    }
   }
 
   const connect = async () => {
@@ -367,11 +413,26 @@ export default function App() {
     if (!result.canceled) setToast({ tone: 'success', message: 'JSON archive exported.' })
   }
 
+  const pairCloud = async (apiUrl: string, code: string) => {
+    if (!window.cloud) throw new Error('Cloud pairing is available in the desktop app.')
+    const next = await window.cloud.pair(apiUrl, code)
+    setCloudStatus(next)
+    setToast({ tone: 'success', message: `Connected to Open Gym${next.user?.name ? ` as ${next.user.name}` : ''}.` })
+  }
+
+  const disconnectCloud = async () => {
+    const next = await window.cloud?.disconnect()
+    if (next) setCloudStatus(next)
+    setToast({ tone: 'neutral', message: 'Open Gym access was removed from this device. Use “Sign out everywhere” in Open Gym to revoke all paired devices.' })
+  }
+
   const currentView = useMemo(() => {
     const props = { data, status, navigate: setPage }
     if (page === 'drinking') return <DrinkingView />
     if (page === 'reports') return <ReportsView reports={reports} uploadRequest={reportUpload} />
+    if (page === 'reader' && webMode) return <p>Reader is available in the Mac app.</p>
     if (page === 'reader') return <ReaderView reader={reader} request={readerRequest} />
+    if (page === 'gym') return <GymView data={data} cloudStatus={cloudStatus} onConnect={() => setSettingsOpen(true)} onSyncHealth={() => runSync()} healthConnected={status.connected} healthSyncing={syncing}/>
     if (page === 'habits') return <HabitsView habits={habits} createRequest={habitCreate} />
     if (page === 'todos') return <TodosView todos={todos} focusRequest={todoFocus} onAssistant={() => setAssistantOpen(true)} />
     if (page === 'movement') return <MovementView {...props} />
@@ -381,7 +442,7 @@ export default function App() {
     if (page === 'body') return <BodyView {...props} />
     if (page === 'devices') return <DevicesView {...props} />
     return <TodayView {...props} />
-  }, [data, page, status, todos, todoFocus, habits, habitCreate, reader, readerRequest, reports, reportUpload])
+  }, [data, page, status, cloudStatus, syncing, runSync, todos, todoFocus, habits, habitCreate, reader, readerRequest, reports, reportUpload])
 
   const isToday = selectedDate === localIso()
   const sourceLabel = status.connected
@@ -465,13 +526,13 @@ export default function App() {
 
           <div className="topbar-actions">
             <IconButton label="Search commands (⌘P / Ctrl+P)" onClick={() => setPaletteOpen(true)}><Search /></IconButton>
-            {page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && <>
+            {page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && page !== 'gym' && <>
             <div className="date-control">
               <IconButton label="Previous day" onClick={() => changeDate(shiftDate(selectedDate, -1))}><ChevronLeftIcon /></IconButton>
               <label className="date-picker">
                 {loadingSelectedDate ? <LoaderCircle className="spin" aria-hidden="true" /> : <CalendarIcon aria-hidden="true" />}
                 <span>{isToday ? 'Today' : formatDate(selectedDate, { day: 'numeric', month: 'short' })}</span>
-                <input type="date" value={selectedDate} max={localIso()} onChange={(event) => changeDate(event.target.value)} />
+                <input type="date" aria-label="Health date (India Standard Time)" title="India Standard Time (UTC+05:30)" value={selectedDate} max={localIso()} onChange={(event) => changeDate(event.target.value)} />
               </label>
               <IconButton label="Next day" disabled={isToday} onClick={() => changeDate(shiftDate(selectedDate, 1))}><ChevronRightIcon /></IconButton>
             </div>
@@ -510,8 +571,8 @@ export default function App() {
           </div>
         </header>
 
-        <div className="page-content" key={page} aria-busy={loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking'}>
-          {loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' ? (
+        <div className="page-content" key={page} aria-busy={loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && page !== 'gym'}>
+          {loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && page !== 'gym' ? (
             <div className="date-loading" role="status" aria-live="polite">
               <LoaderCircle className="spin" aria-hidden="true" />
               <div>
@@ -578,12 +639,15 @@ export default function App() {
       <SettingsDialog
         open={settingsOpen}
         status={status}
+        cloudStatus={cloudStatus}
         connecting={connecting}
         onOpenChange={setSettingsOpen}
         onSave={saveAndConnect}
         onConnect={connect}
         onExport={exportData}
         onDisconnect={disconnect}
+        onPairCloud={pairCloud}
+        onDisconnectCloud={disconnectCloud}
       />
 
       {toast && (
@@ -734,27 +798,36 @@ function OpenFitSidebar({
 function SettingsDialog({
   open,
   status,
+  cloudStatus,
   connecting,
   onOpenChange,
   onSave,
   onConnect,
   onExport,
   onDisconnect,
+  onPairCloud,
+  onDisconnectCloud,
 }: {
   open: boolean
   status: FitbitAuthStatus
+  cloudStatus: CloudStatus
   connecting: boolean
   onOpenChange: (open: boolean) => void
   onSave: (config: FitbitConfigInput) => Promise<void>
   onConnect: () => Promise<void>
   onExport: () => Promise<void>
   onDisconnect: () => Promise<void>
+  onPairCloud: (apiUrl: string, code: string) => Promise<void>
+  onDisconnectCloud: () => Promise<void>
 }) {
   const [clientId, setClientId] = useState(status.clientId)
   const [clientSecret, setClientSecret] = useState('')
   const [redirectUri, setRedirectUri] = useState(status.redirectUri)
   const [provider, setProvider] = useState<HealthProvider>(status.provider)
   const [editing, setEditing] = useState(!status.configured)
+  const [cloudApiUrl, setCloudApiUrl] = useState(cloudStatus.apiUrl || DEFAULT_CLOUD_API)
+  const [pairCode, setPairCode] = useState('')
+  const [cloudBusy, setCloudBusy] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -763,6 +836,8 @@ function SettingsDialog({
     setProvider(status.provider)
     setClientSecret('')
     setEditing(!status.configured)
+    setCloudApiUrl(cloudStatus.apiUrl || DEFAULT_CLOUD_API)
+    setPairCode('')
   }, [open, status])
 
   const secretRequired = provider === 'google-health'
@@ -792,13 +867,24 @@ function SettingsDialog({
     else window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  const submitPair = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!cloudApiUrl.trim() || pairCode.trim().length < 4 || cloudBusy) return
+    setCloudBusy(true)
+    try { await onPairCloud(cloudApiUrl.trim(), pairCode.trim()); setPairCode('') }
+    catch (error) { window.alert(error instanceof Error ? error.message : 'Could not pair with Open Gym.') }
+    finally { setCloudBusy(false) }
+  }
+
+  if (webMode) return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="settings-dialog" showCloseButton><DialogHeader><DialogTitle>OpenFit connections</DialogTitle><DialogDescription>Your private workspace and cached Google Health history are encrypted on Oracle. Saved data appears first, then refreshes in the background.</DialogDescription></DialogHeader><div className="connected-state"><h3>Google Health {status.connected ? 'connected' : 'not connected'}</h3><p>Authorize Google Health once to see your activity and health metrics here.</p><Button onClick={onConnect} disabled={connecting}>{status.connected ? 'Reconnect Google Health' : 'Connect Google Health'}</Button>{status.connected && <Button variant="outline" onClick={onDisconnect}>Disconnect Google Health</Button>}<p>Open Gym, todos, habits, and reports use your existing VM archive.</p><p className="workout-caption">The local Codex assistant and Reader remain available in the Mac app.</p></div></DialogContent></Dialog>
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="settings-dialog" showCloseButton>
         <DialogHeader>
           <div className="dialog-icon"><CloudIcon /></div>
           <DialogTitle>{status.connected && !editing ? `${providerLabel} connected` : `Connect ${providerLabel}`}</DialogTitle>
-          <DialogDescription>Your credentials and data remain encrypted on this computer.</DialogDescription>
+          <DialogDescription>Google Health data stays encrypted on this computer. Open Gym data can sync to your encrypted VM archive.</DialogDescription>
         </DialogHeader>
 
         {status.connected && !editing ? (
@@ -850,6 +936,19 @@ function SettingsDialog({
             </DialogFooter>
           </form>
         )}
+        {window.cloud && <section className="cloud-sync-settings">
+          <div className="cloud-sync-heading"><div><strong>Open Gym cloud</strong><p>Bring in gym sessions and match them with your Fitbit recordings. Tasks, habits, and report PDFs also sync to your VM.</p></div>{cloudStatus.configured && <span className="cloud-connected-pill">{cloudStatus.error ? 'Saved · offline' : <><CheckIcon/> Connected</>}</span>}</div>
+          {cloudStatus.configured ? <div className="cloud-profile-row">
+            <div><strong>{cloudStatus.user?.name || 'Open Gym profile'}</strong><small>{cloudStatus.apiUrl}</small>{cloudStatus.error && <small className="cloud-pair-error">{cloudStatus.error}</small>}</div>
+            <Button type="button" variant="outline" onClick={() => void onDisconnectCloud()}>Remove from this device</Button>
+          </div> : <form onSubmit={submitPair} className="cloud-pair-form">
+            <div className="form-field"><Label htmlFor="openfit-cloud-url">OpenFit cloud API</Label><Input id="openfit-cloud-url" value={cloudApiUrl} onChange={event => setCloudApiUrl(event.target.value)} placeholder="https://api.example.com" spellCheck={false} autoComplete="url"/><p>Use the HTTPS address configured for the OpenFit cloud service.</p></div>
+            <div className="form-field"><Label htmlFor="opengym-pair-code">Open Gym pairing code</Label><Input id="opengym-pair-code" value={pairCode} onChange={event => setPairCode(event.target.value.toUpperCase())} placeholder="Code from Settings → Account" autoComplete="one-time-code" maxLength={32}/><p>Generate a code in Open Gym under Settings → Account → Pair the mobile app. It expires after five minutes.</p></div>
+            {cloudStatus.error && <p className="cloud-pair-error" role="alert">{cloudStatus.error}</p>}
+            <DialogFooter className="settings-footer"><Button type="submit" disabled={cloudBusy || !cloudApiUrl.trim() || pairCode.trim().length < 4}>{cloudBusy ? <LoaderIcon className="spin"/> : <CloudIcon/>} Pair Open Gym</Button></DialogFooter>
+          </form>}
+          <p className="cloud-privacy-note"><ShieldIcon/> Google Health data stays on this device. OpenFit cloud stores todos, habits, and reviewed report files encrypted.</p>
+        </section>}
       </DialogContent>
     </Dialog>
   )

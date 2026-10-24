@@ -158,6 +158,12 @@ function civilDateTime(value, endOfDay = false) {
   }
 }
 
+// Physical timestamps are UTC; civil fields already describe local wall time.
+function indiaTimestamp(value) {
+  const instant = Date.parse(value)
+  return Number.isFinite(instant) ? new Date(instant + 330 * 60000).toISOString() : ''
+}
+
 function dateFromCivil(value) {
   const date = value?.date || value
   if (!date?.year || !date?.month || !date?.day) return null
@@ -165,9 +171,14 @@ function dateFromCivil(value) {
 }
 
 function timeFromCivil(value) {
-  const time = value?.time || value
-  if (typeof time?.hours !== 'number') return null
-  return `${String(time.hours).padStart(2, '0')}:${String(time.minutes || 0).padStart(2, '0')}`
+  if (!value || typeof value !== 'object') return null
+  // Google omits zero-valued protobuf fields. { minutes: 8 } means 00:08,
+  // and an empty time (or omitted time on a civil date) means midnight.
+  const time = value.time ?? (value.date ? {} : value)
+  if (!time || typeof time !== 'object') return null
+  const hours = time.hours ?? 0, minutes = time.minutes ?? 0
+  if (!Number.isInteger(hours) || hours < 0 || hours > 23 || !Number.isInteger(minutes) || minutes < 0 || minutes > 59) return null
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
 }
 
 function durationSeconds(value) {
@@ -179,7 +190,7 @@ function durationSeconds(value) {
 function dataFilter(type, recordType, start, end) {
   if (recordType === 'daily') return `${type.replaceAll('-', '_')}.date >= "${start}" AND ${type.replaceAll('-', '_')}.date < "${end}"`
   if (recordType === 'sleep') return `sleep.interval.civil_end_time >= "${start}" AND sleep.interval.civil_end_time < "${end}"`
-  if (recordType === 'ecg') return `electrocardiogram.interval.start_time >= "${start}T00:00:00Z"`
+  if (recordType === 'ecg') return `electrocardiogram.interval.start_time >= "${start}T00:00:00+05:30"`
   if (recordType === 'sample') return `${type.replaceAll('-', '_')}.sample_time.civil_time >= "${start}" AND ${type.replaceAll('-', '_')}.sample_time.civil_time < "${end}"`
   return `${type.replaceAll('-', '_')}.interval.civil_start_time >= "${start}" AND ${type.replaceAll('-', '_')}.interval.civil_start_time < "${end}"`
 }
@@ -278,6 +289,7 @@ async function syncGoogleHealthData(accessToken, selectedDate, onProgress = () =
 
   return {
     source: 'google-health',
+    timeZoneVersion: 1,
     date: selectedDate,
     generatedAt: new Date().toISOString(),
     endpoints: translateGoogleHealth(endpoints, selectedDate),
@@ -367,7 +379,7 @@ function toLegacySleep(point) {
   const asleep = numeric(summary.minutesAsleep) ?? 0
   const period = numeric(summary.minutesInSleepPeriod)
   const endCivil = sleep.interval?.civilEndTime
-  const dateOfSleep = dateFromCivil(endCivil) || sleep.interval?.endTime?.slice(0, 10)
+  const dateOfSleep = dateFromCivil(endCivil) || indiaTimestamp(sleep.interval?.endTime).slice(0, 10)
   return {
     logId: point.dataPointName ?? point.name,
     dateOfSleep,
@@ -466,14 +478,16 @@ function translateGoogleHealth(raw, selectedDate) {
   }
   const stepPoints = dataPoints(raw.stepsIntradayRaw).map((point) => {
     const record = point.steps || {}
-    const time = timeFromCivil(record.interval?.civilStartTime) || record.interval?.startTime?.slice(11, 16)
-    return { time, value: Number(record.count || 0) }
-  }).filter((point) => point.time).sort((a, b) => a.time.localeCompare(b.time))
+    const time = timeFromCivil(record.interval?.civilStartTime) || indiaTimestamp(record.interval?.startTime).slice(11, 16)
+    const date = dateFromCivil(record.interval?.civilStartTime) || indiaTimestamp(record.interval?.startTime).slice(0, 10)
+    return { time, date, value: Number(record.count || 0) }
+  }).filter((point) => point.time && point.date === selectedDate).sort((a, b) => a.time.localeCompare(b.time))
   const heartPoints = dataPoints(raw.heartIntradayRaw).map((point) => {
     const record = point.heartRate || {}
-    const time = timeFromCivil(record.sampleTime?.civilTime) || record.sampleTime?.physicalTime?.slice(11, 16)
-    return { time, value: Number(record.beatsPerMinute || 0), timestamp: record.sampleTime?.physicalTime || null }
-  }).filter((point) => point.time && point.value).sort((a, b) => a.time.localeCompare(b.time))
+    const time = timeFromCivil(record.sampleTime?.civilTime) || indiaTimestamp(record.sampleTime?.physicalTime).slice(11, 16)
+    const date = dateFromCivil(record.sampleTime?.civilTime) || indiaTimestamp(record.sampleTime?.physicalTime).slice(0, 10)
+    return { time, date, value: Number(record.beatsPerMinute || 0), timestamp: record.sampleTime?.physicalTime || null }
+  }).filter((point) => point.time && point.date === selectedDate && point.value).sort((a, b) => a.time.localeCompare(b.time))
   const profile = raw.profileRaw || {}
   const settings = raw.settingsRaw || {}
   const userInfo = raw.userInfo || {}
@@ -501,11 +515,11 @@ function translateGoogleHealth(raw, selectedDate) {
   const currentTemp = selected(skinTemp, selectedDate)
   const currentCardio = selected(cardio, selectedDate)
   const currentCoreTemperature = selected(coreTemperature, selectedDate)
-  const ecgUpperBound = `${shiftIso(selectedDate, 1)}T00:00:00Z`
+  const ecgUpperBound = Date.parse(`${shiftIso(selectedDate, 1)}T00:00:00+05:30`)
   const ecgReadings = dataPoints(raw.ecgRaw)
     .filter((point) => {
       const startTime = point.electrocardiogram?.interval?.startTime
-      return !startTime || startTime < ecgUpperBound
+      return !startTime || Date.parse(startTime) < ecgUpperBound
     })
     .map((point) => ({
       ...(point.electrocardiogram || {}),
@@ -567,7 +581,7 @@ function translateGoogleHealth(raw, selectedDate) {
   })
 
   return {
-    profile: { user: { displayName: userInfo.name || 'Atleta', avatar640: userInfo.picture || null, memberSince: membershipDate, timezone: settings.timeZone || null } },
+    profile: { user: { displayName: userInfo.name || 'Atleta', avatar640: userInfo.picture || null, memberSince: membershipDate, timezone: 'Asia/Kolkata' } },
     devices,
     activity: { summary: {
       steps: todaySteps,

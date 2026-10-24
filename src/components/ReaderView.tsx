@@ -1,3 +1,4 @@
+import { APP_TIME_ZONE } from '@/lib/timezone'
 import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import { Archive, ArrowLeft, ArrowUpRight, BookOpen, Bookmark, Check, CheckCheck, Clock3, Download, History, Inbox, LoaderCircle, Plus, RefreshCw, Rss, Search, Star, Type } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -10,7 +11,7 @@ type ReaderModel = ReturnType<typeof useReader>
 type ReaderRequest = { kind: 'save' | 'subscribe' | 'search'; serial: number }
 type Scope = 'saved' | 'feeds' | 'all' | 'starred' | 'history' | 'archive' | `feed:${string}`
 const scopeNames: Record<string,string> = { saved:'Saved articles', feeds:'All feeds', all:'All articles', starred:'Starred', history:'Reading history', archive:'Archive' }
-const dayLabel = (value: string) => new Date(value).toLocaleDateString(undefined, {month:'short',day:'numeric'})
+const dayLabel = (value: string) => new Date(value).toLocaleDateString(undefined, {month:'short',day:'numeric',timeZone:APP_TIME_ZONE})
 function articleTitle(article: ReaderArticle) {
   const title = article.title.trim(), site = article.siteName.trim()
   const normalise = (value:string) => value.toLowerCase().replace(/[–—]/g,'-')

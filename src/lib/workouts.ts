@@ -1,3 +1,4 @@
+import { APP_TIME_ZONE } from './timezone'
 import type { ActivityItem, DashboardData } from '../types'
 import { offsetDate } from './research-insights'
 
@@ -7,8 +8,8 @@ export function workoutClock(value: string, timezone: string | null) {
   const instant=Date.parse(value)
   if (!Number.isFinite(instant)) return {date:'',time:''}
   let formatter: Intl.DateTimeFormat
-  try { formatter=new Intl.DateTimeFormat('en-CA',{timeZone:timezone || 'UTC',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}) }
-  catch { formatter=new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}) }
+  try { formatter=new Intl.DateTimeFormat('en-CA',{timeZone:timezone || APP_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}) }
+  catch { formatter=new Intl.DateTimeFormat('en-CA',{timeZone:APP_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}) }
   const parts=formatter.formatToParts(instant), get=(name:string)=>parts.find(part=>part.type===name)?.value || ''
   return {date:`${get('year')}-${get('month')}-${get('day')}`,time:`${get('hour')}:${get('minute')}`}
 }
@@ -31,8 +32,8 @@ export function workoutMetric(item:ActivityItem, metric:WorkoutMetric):number|nu
   if(metric==='heart') return knownNumber(item.averageHeartRate)&&item.averageHeartRate>0?item.averageHeartRate:null
   return knownNumber(item.averagePaceSecondsPerMeter)&&item.averagePaceSecondsPerMeter>0?item.averagePaceSecondsPerMeter*1000:null
 }
-export function collectWorkouts(days:DashboardData[],endDate:string) {
-  const first=offsetDate(endDate,-27), coveredDates=new Set<string>(), items=new Map<string,ActivityItem>(), samples=new Map<string,{timestamp:string;value:number}>()
+export function collectWorkouts(days:DashboardData[],endDate:string,rangeDays=28) {
+  const first=offsetDate(endDate,1-rangeDays), coveredDates=new Set<string>(), items=new Map<string,ActivityItem>(), samples=new Map<string,{timestamp:string;value:number}>()
   // A complete, newer exercise response supersedes older snapshots, including deleted sessions.
   const snapshots=[...days].sort((a,b)=>b.generatedAt.localeCompare(a.generatedAt))
   for(const day of snapshots) {
@@ -42,13 +43,13 @@ export function collectWorkouts(days:DashboardData[],endDate:string) {
     }
     const range=day.workoutCoverage
     if(range && /^\d{4}-\d{2}-\d{2}$/.test(range.startDate) && /^\d{4}-\d{2}-\d{2}$/.test(range.endDate)) {
-      for(let i=0;i<28;i++) { const date=offsetDate(endDate,-i); if(date>=range.startDate && date<=range.endDate)coveredDates.add(date) }
+      for(let i=0;i<rangeDays;i++) { const date=offsetDate(endDate,-i); if(date>=range.startDate && date<=range.endDate)coveredDates.add(date) }
     }
     for(const sample of day.health.heartRateSamples || []) if(!samples.has(sample.timestamp)) samples.set(sample.timestamp,sample)
   }
   return { activities:[...items.values()].sort((a,b)=>`${b.date}T${b.time}`.localeCompare(`${a.date}T${a.time}`)), coveredDates, samples:[...samples.values()] }
 }
-export function workoutHeartSeries(item:ActivityItem,samples:Array<{timestamp:string;value:number}>) {
+export function workoutHeartSeries(item:Pick<ActivityItem, 'startTime' | 'endTime'>,samples:Array<{timestamp:string;value:number}>) {
   const absolute=(value:string|null|undefined)=>value && /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)?Date.parse(value):NaN
   const start=absolute(item.startTime), end=absolute(item.endTime)
   if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>7*86400000)return null

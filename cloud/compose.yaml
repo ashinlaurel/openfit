@@ -1,0 +1,19 @@
+services:
+  openfit-cloud:
+    build:
+      context: ..
+      dockerfile: cloud/Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: 3100
+      DATA_DIR: /data
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid

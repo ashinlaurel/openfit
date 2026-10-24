@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, PointerEvent, ReactNode } from 'react'
 import type { SleepStage, SleepStageSegment } from '../types'
-import { formatNumber, formatTime } from '../lib/format'
+import { formatClockLabel, formatNumber, formatTime } from '../lib/format'
 
 type NumericValue = number | null
 
@@ -19,6 +19,8 @@ interface BaseChartProps {
   variant?: 'line' | 'area'
   referenceBand?: { low: number | null; high: number | null }
   showRangeLabels?: boolean
+  xDomain?: [number, number]
+  markers?: Array<{ x: number; label: string; color: string }>
 }
 
 function finiteValues(values: NumericValue[]) {
@@ -115,7 +117,7 @@ function CompactRangeLabels({ labels }: { labels: string[] }) {
 
 export function LineChart({
   values,
-  labels = [],
+  labels: inputLabels = [],
   xValues,
   color = 'var(--color-indigo)',
   height = 220,
@@ -127,7 +129,10 @@ export function LineChart({
   variant = 'line',
   showRangeLabels = false,
   referenceBand,
+  xDomain,
+  markers = [],
 }: BaseChartProps) {
+  const labels = inputLabels.map(formatClockLabel)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const areaId = useId().replace(/:/g, '')
   const valid = finiteValues(values)
@@ -142,8 +147,8 @@ export function LineChart({
   const band=referenceBand&&(referenceBand.low!==null||referenceBand.high!==null)&&[referenceBand.low,referenceBand.high].every(value=>value===null||Number.isFinite(value))&&(referenceBand.low===null||referenceBand.high===null||referenceBand.low<=referenceBand.high)?referenceBand:undefined
   const domain = lineDomain([...valid,...(band?[band.low,band.high].filter((value):value is number=>value!==null):[])], target)
   const validX = xValues?.length === values.length && xValues.every(Number.isFinite) ? xValues : values.map((_, index) => index)
-  const xMin = Math.min(...validX)
-  const xMax = Math.max(...validX)
+  const xMin = xDomain?.[0] ?? Math.min(...validX)
+  const xMax = xDomain?.[1] ?? Math.max(...validX)
   const xFor = (index: number) => margin.left + (xMax === xMin ? plotWidth / 2 : ((validX[index] - xMin) / (xMax - xMin)) * plotWidth)
   const yFor = (value: number) => margin.top + ((domain.max - value) / (domain.max - domain.min)) * plotHeight
   const segmentIndexes: number[][] = []
@@ -219,6 +224,10 @@ export function LineChart({
         <title>{ariaLabel}</title>
         <desc>{chartSummary(valid, formatter)}{band?' Shaded green area shows the saved reference interval.':''}</desc>
         {band&&<g aria-label="Saved reference interval"><rect x={margin.left} y={yFor(band.high??domain.max)} width={plotWidth} height={Math.max(0,yFor(band.low??domain.min)-yFor(band.high??domain.max))} fill="#9cbfae" fillOpacity={0.14}/>{[band.low,band.high].map((bound,index)=>bound!==null&&<g key={index}><line x1={margin.left} x2={width-margin.right} y1={yFor(bound)} y2={yFor(bound)} stroke="#9cbfae" strokeOpacity={0.65} strokeDasharray="4 4"/><text x={width-margin.right-4} y={Math.max(margin.top+10,yFor(bound)-5)} textAnchor="end" fill="#9cbfae" fontSize={9}>{formatter(bound)}</text></g>)}</g>}
+        {markers.filter(marker => Number.isFinite(marker.x) && marker.x >= xMin && marker.x <= xMax).map((marker,index) => {
+          const x = margin.left + (xMax === xMin ? plotWidth / 2 : (marker.x-xMin)/(xMax-xMin)*plotWidth)
+          return <g key={index} aria-label={marker.label}><title>{marker.label}</title><line x1={x} x2={x} y1={margin.top+6} y2={baseline} stroke={marker.color} strokeOpacity={.25} strokeDasharray="3 5"/><circle cx={x} cy={margin.top+3} r={3.5} fill={marker.color}/></g>
+        })}
         {variant === 'area' && segments.map((segment, index) => (
           <path
             key={`area-${areaId}-${index}`}
@@ -281,7 +290,7 @@ export function LineChart({
 
 export function ColumnChart({
   values,
-  labels = [],
+  labels: inputLabels = [],
   xValues,
   color = 'var(--color-indigo)',
   height = 220,
@@ -292,6 +301,7 @@ export function ColumnChart({
   ariaLabel = 'Values by period',
   showRangeLabels = false,
 }: BaseChartProps) {
+  const labels = inputLabels.map(formatClockLabel)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const valid = finiteValues(values)
   const { containerRef, width } = useResponsiveChartWidth(valid.length > 0)

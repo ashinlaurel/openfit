@@ -6,7 +6,7 @@ export function useReports(){
   const [loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[progress,setProgress]=useState<ReportProgress|null>(null)
   const locked=useRef(false)
   const load=useCallback(async()=>{setLoading(true);try{if(!window.reports)throw new Error('Restart the desktop app to enable medical report storage.');setStore(await window.reports.load());setError('')}catch(error){setError(error instanceof Error?error.message:'Unable to open reports.')}finally{setLoading(false)}},[])
-  useEffect(()=>{void load();return window.reports?.onProgress(setProgress)},[load])
+  useEffect(()=>{void load();const progressOff=window.reports?.onProgress(setProgress),cloudOff=window.cloud?.onSync(result=>{if(result.ok)void load()});return()=>{progressOff?.();cloudOff?.()}},[load])
   const run=useCallback(async<T,>(operation:()=>Promise<T>):Promise<T|null>=>{
     if(locked.current)return null
     locked.current=true;setBusy(true);setError('');setProgress(null)
