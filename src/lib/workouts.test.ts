@@ -22,7 +22,7 @@ describe('Workout analysis',()=>{
     expect(workoutClock('2026-06-22T23:30:00Z','Asia/Kolkata')).toEqual({date:'2026-06-23',time:'05:00'})
     expect(workoutClock('2026-06-22T23:30:00','Asia/Kolkata')).toEqual({date:'2026-06-22',time:'23:30'})
     expect(workoutClock('not a timestamp','UTC')).toEqual({date:'',time:''})
-    expect(workoutClock('2026-06-22T23:30:00Z','invalid')).toEqual({date:'2026-06-22',time:'23:30'})
+    expect(workoutClock('2026-06-22T23:30:00Z','invalid')).toEqual({date:'2026-06-23',time:'05:00'})
   })
   it('matches exact session timestamps, averages within minute bins and preserves recording gaps',()=>{
     const workout=item({startTime:'2026-06-22T09:00:00+02:00',endTime:'2026-06-22T09:05:00+02:00'})

@@ -10,6 +10,7 @@ const { fileURLToPath } = require('node:url')
 const googleHealth = require('./google-health-service.cjs')
 const fitbitLegacy = require('./fitbit-legacy-service.cjs')
 const healthCache = require('./health-cache.cjs')
+const drinkingStore = require('./drinking-store.cjs')
 const todoStore = require('./todo-store.cjs')
 const habitStore = require('./habit-store.cjs')
 const readerStore = require('./reader-store.cjs')
@@ -44,6 +45,7 @@ let gymCacheFile = null
 let workoutLinksFile = null
 let todoFile = null
 let habitFile = null
+let drinkingFile = null
 let readerFile = null
 let readerQueue = Promise.resolve()
 let reportFile = null
@@ -465,6 +467,16 @@ function habitContext() {
   return JSON.stringify({ scope: 'habits', today: localIsoDate(), checkinsSince: since, totalHabits: all.length, includedHabits: included.length, habits: included })
 }
 
+function readDrinking() {
+  if (!fs.existsSync(drinkingFile)) {
+    const initial = drinkingStore.emptyStore()
+    writeSecure(drinkingFile, initial)
+    return initial
+  }
+  try { return drinkingStore.validateStore(readSecure(drinkingFile)) }
+  catch { throw new Error('Your drinking log could not be opened. The saved data has been preserved.') }
+}
+
 function readHabits() {
   if (!fs.existsSync(habitFile)) return habitStore.emptyStore()
   try { return habitStore.validateStore(readSecure(habitFile)) } catch { throw new Error('Habit store could not be opened. Your data is preserved; use Recover backup.') }
@@ -748,6 +760,14 @@ function registerIpc() {
     writeSecure(readerFile, backup)
     return backup
   }))
+  trustedHandle('drinking:load', () => readDrinking())
+  trustedHandle('drinking:save', input => {
+    const current = readDrinking()
+    const next = drinkingStore.validateStore(input)
+    writeSecure(drinkingFile + '.backup', current)
+    writeSecure(drinkingFile, next)
+    return next
+  })
   trustedHandle('habits:load', () => readHabits())
   trustedHandle('habits:mutate', action => {
     const current = readHabits()
@@ -1022,6 +1042,7 @@ app.whenReady().then(() => {
   workoutLinksFile = path.join(userData, 'workout-links.secure.json')
   todoFile = path.join(userData, 'todos.secure.json')
   habitFile = path.join(userData, 'habits.secure.json')
+  drinkingFile = path.join(userData, 'drinking.secure.json')
   readerFile = path.join(userData, 'reader.secure.json')
   reportFile = path.join(userData, 'reports.secure.json')
   reportPdfDirectory = path.join(userData, 'medical-pdfs')

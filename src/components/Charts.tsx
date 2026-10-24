@@ -20,6 +20,7 @@ interface BaseChartProps {
   referenceBand?: { low: number | null; high: number | null }
   showRangeLabels?: boolean
   xDomain?: [number, number]
+  minYTickStep?: number
   markers?: Array<{ x: number; label: string; color: string }>
 }
 
@@ -59,12 +60,13 @@ function niceStep(range: number, tickCount = 3) {
   return niceFraction * power
 }
 
-function lineDomain(values: number[], target: number | null) {
+function lineDomain(values: number[], target: number | null, minTickStep = 0) {
   const withTarget = target === null ? values : [...values, target]
   const rawMin = Math.min(...withTarget)
   const rawMax = Math.max(...withTarget)
   const rawRange = Math.max(rawMax - rawMin, Math.abs(rawMax) * 0.08, 1)
-  const step = niceStep(rawRange, 5)
+  const automaticStep = niceStep(rawRange, 5)
+  const step = minTickStep > 0 ? Math.ceil(automaticStep / minTickStep) * minTickStep : automaticStep
   const paddedMin = Math.floor((rawMin - rawRange * 0.06) / step) * step
   const min = rawMin < 0 ? paddedMin : Math.max(0, paddedMin)
   const max = Math.ceil((rawMax + rawRange * 0.08) / step) * step
@@ -131,6 +133,7 @@ export function LineChart({
   referenceBand,
   xDomain,
   markers = [],
+  minYTickStep = 0,
 }: BaseChartProps) {
   const labels = inputLabels.map(formatClockLabel)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
@@ -139,13 +142,20 @@ export function LineChart({
   const { containerRef, width } = useResponsiveChartWidth(valid.length > 0)
   if (!valid.length) return <div className="chart-empty" style={{ height }}>No data for this range</div>
 
+  const band=referenceBand&&(referenceBand.low!==null||referenceBand.high!==null)&&[referenceBand.low,referenceBand.high].every(value=>value===null||Number.isFinite(value))&&(referenceBand.low===null||referenceBand.high===null||referenceBand.low<=referenceBand.high)?referenceBand:undefined
+  const domain = lineDomain([...valid,...(band?[band.low,band.high].filter((value):value is number=>value!==null):[])], target, minYTickStep)
+  const middleTick = Math.min(domain.max, domain.min + Math.ceil((domain.max - domain.min) / (domain.step * 2)) * domain.step)
+  const ticks = minYTickStep > 0
+    ? Array.from({ length: Math.round((domain.max - domain.min) / domain.step) + 1 }, (_, index) => domain.min + index * domain.step)
+    : [domain.min, middleTick, domain.max]
+  // Axis labels use a 13px monospace font. Include the formatted unit and
+  // the gap before the plot so leading digits stay inside the container.
+  const tickLabelWidth = Math.max(...ticks.map((tick) => formatter(tick).length)) * 8
   const margin = compact
     ? { top: 7, right: 2, bottom: showRangeLabels ? 22 : 7, left: 2 }
-    : { top: 18, right: 14, bottom: 30, left: 48 }
+    : { top: 18, right: 14, bottom: 30, left: Math.max(48, tickLabelWidth + 18) }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
-  const band=referenceBand&&(referenceBand.low!==null||referenceBand.high!==null)&&[referenceBand.low,referenceBand.high].every(value=>value===null||Number.isFinite(value))&&(referenceBand.low===null||referenceBand.high===null||referenceBand.low<=referenceBand.high)?referenceBand:undefined
-  const domain = lineDomain([...valid,...(band?[band.low,band.high].filter((value):value is number=>value!==null):[])], target)
   const validX = xValues?.length === values.length && xValues.every(Number.isFinite) ? xValues : values.map((_, index) => index)
   const xMin = xDomain?.[0] ?? Math.min(...validX)
   const xMax = xDomain?.[1] ?? Math.max(...validX)
@@ -175,8 +185,6 @@ export function LineChart({
       area: `M ${xFor(first).toFixed(2)} ${baseline.toFixed(2)} ${line.replace(/^M/, 'L')} L ${xFor(last).toFixed(2)} ${baseline.toFixed(2)} Z`,
     }
   })
-  const middleTick = Math.min(domain.max, domain.min + Math.ceil((domain.max - domain.min) / (domain.step * 2)) * domain.step)
-  const ticks = [domain.min, middleTick, domain.max]
   const labelEvery = Math.max(1, Math.ceil(labels.length / 6))
   let lastValidIndex = values.length - 1
   while (lastValidIndex > 0 && (values[lastValidIndex] === null || !Number.isFinite(values[lastValidIndex]))) lastValidIndex -= 1

@@ -1,6 +1,6 @@
 import { describe,it,expect } from 'vitest'
-import { alcoholUnits,alcoholGrams,weekStart,seedDrinking,sumUnits,validDrink,isAlcoholFree,completedDryStreak } from './drinking'
-describe('drinking calculations and demo integrity',()=>{
+import { alcoholUnits,alcoholGrams,weekStart,emptyDrinking,sumUnits,validDrink,isAlcoholFree,completedDryStreak } from './drinking'
+describe('personal drinking log calculations',()=>{
  it('uses ABV percent, not a fraction, and totals each pour',()=>{
   expect(alcoholUnits(500,5)).toBe(2.5)
   expect(alcoholUnits(30,40)).toBe(1.2)
@@ -13,12 +13,12 @@ describe('drinking calculations and demo integrity',()=>{
   expect(weekStart('2026-01-01')).toBe('2025-12-29')
  })
  it('defaults missing entries to alcohol-free and keeps future days separate',()=>{
-  const demo=seedDrinking('2026-10-19')
-  expect(isAlcoholFree(demo.entries,'2026-10-19','2026-10-19')).toBe(true)
-  expect(isAlcoholFree(demo.entries,'2026-10-20','2026-10-19')).toBe(false)
-  expect(demo.entries.some(e=>demo.dryDays.includes(e.date))).toBe(false)
-  expect(demo.entries.every(e=>validDrink(e,'2026-10-19'))).toBe(true)
-  expect(sumUnits(demo.entries)).toBeGreaterThan(0)
+  const store=emptyDrinking('2026-10-19')
+  expect(store.entries).toEqual([])
+  expect(sumUnits(store.entries)).toBe(0)
+  expect(isAlcoholFree(store.entries,'2026-10-19','2026-10-19',store.trackingStart)).toBe(true)
+  expect(isAlcoholFree(store.entries,'2026-10-20','2026-10-19',store.trackingStart)).toBe(false)
+  expect(isAlcoholFree(store.entries,'2026-10-18','2026-10-19',store.trackingStart)).toBe(false)
  })
  it('updates dry streaks when entries are added, edited or deleted, bounded by tracking start',()=>{
   const entry={id:'one',name:'Test',date:'2026-10-17',ml:330,abv:5,note:''}

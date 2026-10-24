@@ -61,6 +61,11 @@ contextBridge.exposeInMainWorld('habits', Object.freeze({
   recover: () => ipcRenderer.invoke('habits:recover'),
 }))
 
+contextBridge.exposeInMainWorld('drinking', Object.freeze({
+  load: () => ipcRenderer.invoke('drinking:load'),
+  save: store => ipcRenderer.invoke('drinking:save', store),
+}))
+
 contextBridge.exposeInMainWorld('reader', Object.freeze({
   load: () => ipcRenderer.invoke('reader:load'),
   save: url => ipcRenderer.invoke('reader:save', url),

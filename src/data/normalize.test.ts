@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeFitbitData } from './normalize'
+import { calculateSleepScore, sleepScoreForTrend } from '@/lib/sleep-score'
 import type { RawFitbitPayload } from '../types'
 
 describe('normalizeFitbitData', () => {
+  it('keeps provider and OpenFit scores separate and uses the same inputs for historical nights', () => {
+    const record = { dateOfSleep: '2026-10-24', isMainSleep: true, minutesAsleep: 430, timeInBed: 444, efficiency: 97, sleepScore: 72 }
+    const payload: RawFitbitPayload = {
+      source: 'google-health', date: '2026-10-24', generatedAt: '2026-10-25T00:00:00Z',
+      endpoints: { sleep: { sleep: [record] }, sleepTrend: { sleep: [record] } }, errors: [],
+      rateLimit: { limit: null, remaining: null, resetSeconds: null },
+    }
+    const data = normalizeFitbitData(payload)
+    expect(data.sleep.score).toBe(72)
+    expect(data.trends[0].sleepScore).toBe(72)
+    expect(calculateSleepScore(data.sleep).value).toBe(93)
+    expect(sleepScoreForTrend(data.trends[0])).toBe(93)
+    expect(record.sleepScore).toBe(72)
+  })
   it('normalizes legacy Fitbit responses without inventing missing metrics', () => {
     const payload: RawFitbitPayload = {
       source: 'fitbit',

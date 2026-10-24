@@ -31,6 +31,7 @@ export interface TrendPoint {
   sleepMinutes: number | null
   sleepScore: number | null
   sleepEfficiency: number | null
+  sleepTimeInBed?: number | null
   weight: number | null
   bodyFat: number | null
   waterMl: number | null

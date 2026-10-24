@@ -1,4 +1,5 @@
 import { workoutMinutes } from './workouts'
+import { calculateSleepScore, sleepScoreForTrend, SLEEP_SCORE_VERSION } from './sleep-score'
 import type { DashboardData, PageId, TrendPoint } from '@/types'
 
 export interface AssistantNavigation {
@@ -47,6 +48,7 @@ function compactTrend(point: TrendPoint) {
     cardioScore: point.cardioScore,
     sleepMinutes: point.sleepMinutes,
     sleepScore: point.sleepScore,
+    openfitSleepEstimate: { value: sleepScoreForTrend(point), method: SLEEP_SCORE_VERSION, validated: false },
     sleepEfficiencyPercent: point.sleepEfficiency,
     weightKg: point.weight,
     bodyFatPercent: point.bodyFat,
@@ -104,6 +106,7 @@ function compactDay(data: DashboardData) {
       totalMinutes: data.sleep.totalMinutes,
       goalMinutes: data.sleep.goalMinutes,
       score: data.sleep.score,
+      openfitSleepEstimate: { ...calculateSleepScore(data.sleep), validated: false, scope: 'Adult duration and continuity estimate; not the provider sleep score.' },
       efficiencyPercent: data.sleep.efficiency,
       startTime: data.sleep.startTime,
       endTime: data.sleep.endTime,

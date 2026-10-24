@@ -34,9 +34,7 @@ function writeSecure(file, value) {
 }
 
 function localIsoToday() {
-  const now = new Date()
-  const offset = now.getTimezoneOffset() * 60_000
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10)
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
 }
 
 function responseName(url) {
@@ -173,10 +171,15 @@ app.whenReady().then(async () => {
     const summary = {
       date,
       cacheUpdated,
+      timeZones: {
+        app: translated.endpoints.profile?.user?.timezone ?? null,
+        google: captures.find((capture) => capture.name === 'me/settings')?.body?.timeZone ?? null,
+      },
       requests: {
         jobs: translated.requestStats.total,
         succeeded: translated.requestStats.succeeded,
         failed: translated.errors.length,
+        failedSources: translated.errors.map(({ key, status, message }) => ({ key, status: status ?? null, message })),
         httpResponses: captures.length,
       },
       nonEmptyResponses: responseGroups.filter((group) => group.dataPoints || group.rollupDataPoints || group.fieldCount),

@@ -240,7 +240,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
   const sleepTrendRecords = asArray(asObject(e.sleepTrend).sleep)
   const sleepTrend = new Map(sleepTrendRecords.filter((item) => item.isMainSleep !== false).map((item) => [
     String(item.dateOfSleep),
-    { minutes: numeric(item.minutesAsleep), score: numeric(item.sleepScore), efficiency: numeric(item.efficiency) },
+    { minutes: numeric(item.minutesAsleep), score: numeric(item.sleepScore), efficiency: numeric(item.efficiency), timeInBed: numeric(item.timeInBed) },
   ]))
   const metricTrend = new Map(asArray(asObject(e.metricTrends).values).map((item) => [String(item.dateTime), item]))
   const weightTrendRecords = asArray(asObject(e.bodyWeight).weight)
@@ -274,6 +274,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       sleepMinutes: sleepTrend.get(date)?.minutes ?? null,
       sleepScore: sleepTrend.get(date)?.score ?? null,
       sleepEfficiency: sleepTrend.get(date)?.efficiency ?? numeric(metric.sleepEfficiency),
+      sleepTimeInBed: sleepTrend.get(date)?.timeInBed ?? null,
       weight: weightTrend.get(date) ?? null,
       bodyFat: numeric(metric.bodyFat),
       waterMl: numeric(metric.waterMl),

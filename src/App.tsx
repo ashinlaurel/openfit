@@ -144,7 +144,7 @@ export default function App() {
   const [proposals, setProposals] = useState<TodoAction[]>([])
   const [page, setPage] = useState<PageId>('today')
   const [selectedDate, setSelectedDate] = useState(localIso())
-  const [data, setData] = useState<DashboardData>(() => webMode ? normalizeFitbitData(emptyWebHealth()) : createDemoData())
+  const [data, setData] = useState<DashboardData>(() => webMode || window.fitbit ? normalizeFitbitData(emptyWebHealth()) : createDemoData())
   const [status, setStatus] = useState(defaultStatus)
   const [cloudStatus, setCloudStatus] = useState<CloudStatus>({ configured: false, apiUrl: '', user: null })
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -168,9 +168,10 @@ export default function App() {
   const [syncTargetDate, setSyncTargetDate] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
   const [syncProgress, setSyncProgress] = useState<SyncProgressState | null>(null)
+  const [backgroundSyncProgress, setBackgroundSyncProgress] = useState<SyncProgressState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const selectedDateRef = useRef(selectedDate)
-  const dataDateRef = useRef(data.selectedDate)
+  const cacheReadVersion = useRef(0)
   const syncingRef = useRef(false)
   const syncTargetDateRef = useRef<string | null>(null)
   const queuedDateRef = useRef<string | null>(null)
@@ -183,21 +184,22 @@ export default function App() {
     selectedDateRef.current = selectedDate
   }, [selectedDate])
 
-  useEffect(() => {
-    dataDateRef.current = data.selectedDate
-  }, [data.selectedDate])
+  const showCachedDate = useCallback(async (date: string, fallbackToLatest = false) => {
+    if (!window.fitbit) return
+    const version = ++cacheReadVersion.current
+    let payload = await window.fitbit.getCachedData(date)
+    if (!payload && fallbackToLatest) payload = await window.fitbit.getCachedData()
+    // A late disk read must not replace a newer selection or completed refresh.
+    if (!payload || version !== cacheReadVersion.current || selectedDateRef.current !== date) return
+    setData({ ...normalizeFitbitData(payload), source: 'cache' })
+  }, [])
 
   const startupLoaded = useRef(false)
   const loadNativeState = useCallback(async () => {
     if (!window.fitbit) return false
     const startingDate = selectedDateRef.current
     // Render the cache as soon as it arrives, independently of cloud pairing.
-    const cached = window.fitbit.getCachedData(startingDate).then(payload => {
-      if (!payload || payload.date !== startingDate || selectedDateRef.current !== startingDate) return
-      const normalized = normalizeFitbitData(payload)
-      dataDateRef.current = normalized.selectedDate
-      setData({ ...normalized, source: 'cache' })
-    }).catch(() => undefined)
+    const cached = showCachedDate(startingDate, true).catch(() => undefined)
     void window.cloud?.getStatus().then(setCloudStatus).catch(() => undefined)
     try {
       const nextStatus = await window.fitbit.getStatus()
@@ -208,7 +210,7 @@ export default function App() {
       setToast({ tone: 'error', message: error instanceof Error ? error.message : 'Unable to read the local status.' })
       return false
     }
-  }, [])
+  }, [showCachedDate])
 
   const runSync = useCallback(async (requestedDate?: string) => {
     if (!window.fitbit) {
@@ -239,7 +241,7 @@ export default function App() {
           const normalized = normalizeFitbitData(payload)
 
           if (selectedDateRef.current === date) {
-            dataDateRef.current = normalized.selectedDate
+            cacheReadVersion.current += 1
             setData(normalized)
             setToast({
               tone: payload.cacheHit || payload.errors.length ? 'neutral' : 'success',
@@ -258,11 +260,7 @@ export default function App() {
           const hasDifferentDateQueued = Boolean(queuedDate && queuedDate !== date)
 
           if (failedDateIsStillSelected && !hasDifferentDateQueued) {
-            // A failed refresh must not move the calendar back to an older day.
-            if (dataDateRef.current !== date) {
-              dataDateRef.current = date
-              setData(normalizeFitbitData(emptyWebHealth(date)))
-            }
+            // Keep the last readable snapshot on screen when a refresh fails.
             setToast({ tone: 'error', message: error instanceof Error ? error.message : 'Sync failed.' })
           }
         }
@@ -303,7 +301,11 @@ export default function App() {
     })
     const unsubscribeSync = window.fitbit.onSyncProgress((progress) => {
       if (syncingRef.current && (!progress.date || progress.date === syncTargetDateRef.current)) {
+        setBackgroundSyncProgress(null)
         setSyncProgress(progress)
+      } else {
+        // The native process also fills missing historical days after a refresh.
+        setBackgroundSyncProgress(progress.completed < progress.total ? progress : null)
       }
     })
     return () => {
@@ -344,19 +346,14 @@ export default function App() {
     setSelectedDate(date)
     if (data.source === 'demo' && !status.connected) {
       const demoData = createDemoData(date)
-      dataDateRef.current = demoData.selectedDate
+      cacheReadVersion.current += 1
       setData(demoData)
       return
     }
-    if (status.connected) {
-      void window.fitbit?.getCachedArchive().then(archive => {
-        const cached = archive.days[date]
-        if (cached && selectedDateRef.current === date && !syncingRef.current) {
-          const normalized = normalizeFitbitData(cached)
-          dataDateRef.current = date
-          setData({ ...normalized, source: 'cache' })
-        }
-      }).catch(() => undefined).finally(() => { if (selectedDateRef.current === date) void runSync(date) })
+    if (window.fitbit) {
+      void showCachedDate(date).catch(() => undefined).finally(() => {
+        if (status.connected && selectedDateRef.current === date) void runSync(date)
+      })
     }
   }
 
@@ -398,6 +395,8 @@ export default function App() {
   const disconnect = async () => {
     if (!window.fitbit) return
     setStatus(await window.fitbit.disconnect())
+    cacheReadVersion.current += 1
+    setBackgroundSyncProgress(null)
     setData(createDemoData(selectedDate))
     setSettingsOpen(false)
     setPage('today')
@@ -449,14 +448,15 @@ export default function App() {
     ? status.provider === 'fitbit-legacy' ? 'Fitbit legacy' : 'Google Health'
     : data.source === 'demo' ? 'Demo data' : 'Local cache'
   const pageMeta = navItems.find((item) => item.id === page) ?? navItems[0]
-  const loadingSelectedDate = syncing && data.selectedDate !== selectedDate
-  const selectedDateQueued = loadingSelectedDate && syncTargetDate !== null && syncTargetDate !== selectedDate
-  const syncProgressPercent = syncProgress && syncProgress.total > 0
-    ? Math.round(syncProgress.completed / syncProgress.total * 100)
+  const showingPreviousDate = data.source !== 'demo' && data.selectedDate !== selectedDate
+  const visibleSyncProgress = backgroundSyncProgress ?? syncProgress
+  const visibleSyncDate = backgroundSyncProgress?.date ?? syncTargetDate
+  const syncProgressPercent = visibleSyncProgress && visibleSyncProgress.total > 0
+    ? Math.round(visibleSyncProgress.completed / visibleSyncProgress.total * 100)
     : null
-  const syncProgressLabel = syncProgress?.total
-    ? `${syncProgress.completed} of ${syncProgress.total} sources`
-    : 'Starting secure sync…'
+  const syncProgressLabel = visibleSyncProgress?.total
+    ? `${visibleSyncProgress.completed} of ${visibleSyncProgress.total} sources`
+    : 'Starting…'
   const batteryLevel = data.device?.batteryLevel == null
     ? null
     : Math.max(0, Math.min(100, Math.round(data.device.batteryLevel)))
@@ -503,6 +503,11 @@ export default function App() {
         userName={data.profile.displayName}
         userAvatar={data.profile.avatar}
         sourceLabel={sourceLabel}
+        syncStatus={syncing || backgroundSyncProgress ? {
+          label: visibleSyncDate ? `Updating ${formatDate(visibleSyncDate, { day: 'numeric', month: 'short' })}` : 'Updating health data',
+          detail: syncProgressLabel,
+          percent: syncProgressPercent,
+        } : null}
         onNavigate={navigate}
         onSettings={() => setSettingsOpen(true)}
       />
@@ -520,6 +525,7 @@ export default function App() {
               <h1>{pageMeta.label}</h1>
               <p className="topbar-meta">
                 <span>{page === 'today' ? formatDate(selectedDate, { weekday: 'long', day: 'numeric', month: 'long' }) : pageMeta.copy}</span>
+                {showingPreviousDate && <span className="cached-date-note">Showing saved data for {formatDate(data.selectedDate, { day: 'numeric', month: 'short' })}</span>}
               </p>
             </div>
           </div>
@@ -530,7 +536,7 @@ export default function App() {
             <div className="date-control">
               <IconButton label="Previous day" onClick={() => changeDate(shiftDate(selectedDate, -1))}><ChevronLeftIcon /></IconButton>
               <label className="date-picker">
-                {loadingSelectedDate ? <LoaderCircle className="spin" aria-hidden="true" /> : <CalendarIcon aria-hidden="true" />}
+                <CalendarIcon aria-hidden="true" />
                 <span>{isToday ? 'Today' : formatDate(selectedDate, { day: 'numeric', month: 'short' })}</span>
                 <input type="date" aria-label="Health date (India Standard Time)" title="India Standard Time (UTC+05:30)" value={selectedDate} max={localIso()} onChange={(event) => changeDate(event.target.value)} />
               </label>
@@ -548,11 +554,6 @@ export default function App() {
 
             {status.connected ? (
               <>
-                {syncing && (
-                  <span className="sync-status" role="status" aria-live="polite">
-                    {syncProgress?.total ? `${syncProgress.completed}/${syncProgress.total}` : 'Syncing'}
-                  </span>
-                )}
                 <IconButton
                   label={syncProgress?.total ? `Syncing data ${syncProgress.completed} of ${syncProgress.total}` : syncing ? 'Starting data sync' : 'Refresh data'}
                   className="refresh-button"
@@ -571,36 +572,7 @@ export default function App() {
           </div>
         </header>
 
-        <div className="page-content" key={page} aria-busy={loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && page !== 'gym'}>
-          {loadingSelectedDate && page !== 'todos' && page !== 'habits' && page !== 'reader' && page !== 'reports' && page !== 'drinking' && page !== 'gym' ? (
-            <div className="date-loading" role="status" aria-live="polite">
-              <LoaderCircle className="spin" aria-hidden="true" />
-              <div>
-                <strong>
-                  {selectedDateQueued
-                    ? `${formatDate(selectedDate, { weekday: 'long', day: 'numeric', month: 'long' })} is next`
-                    : `Loading ${formatDate(selectedDate, { weekday: 'long', day: 'numeric', month: 'long' })}`}
-                </strong>
-                <span>
-                  {selectedDateQueued && syncTargetDate
-                    ? `Finishing ${formatDate(syncTargetDate, { day: 'numeric', month: 'short' })} first · ${syncProgressLabel}`
-                    : syncProgressLabel}
-                </span>
-                <div
-                  className={cn('date-loading-progress', syncProgressPercent === null && 'is-indeterminate')}
-                  role="progressbar"
-                  aria-label="Data sync progress"
-                  aria-valuemin={0}
-                  aria-valuemax={syncProgress?.total || 100}
-                  aria-valuenow={syncProgress?.total ? syncProgress.completed : undefined}
-                >
-                  <i style={{ width: syncProgressPercent === null ? '32%' : `${syncProgressPercent}%` }} />
-                </div>
-                {selectedDateQueued && <small>You can keep moving between days; the latest selection loads next.</small>}
-              </div>
-            </div>
-          ) : currentView}
-        </div>
+        <div className="page-content" key={page}>{currentView}</div>
       </SidebarInset>
 
       {!assistantOpen && page !== 'reports' && page !== 'drinking' && (
@@ -667,6 +639,7 @@ function OpenFitSidebar({
   userName,
   userAvatar,
   sourceLabel,
+  syncStatus,
   onNavigate,
   onSettings,
 }: {
@@ -675,6 +648,7 @@ function OpenFitSidebar({
   userName: string
   userAvatar: string | null
   sourceLabel: string
+  syncStatus: { label: string; detail: string; percent: number | null } | null
   onNavigate: (page: PageId) => void
   onSettings: () => void
 }) {
@@ -774,6 +748,12 @@ function OpenFitSidebar({
       </SidebarContent>
 
       <SidebarFooter>
+        {syncStatus && <div className="sidebar-health-sync" role="status" aria-live="polite">
+          <LoaderCircle className="spin" aria-hidden="true" />
+          <div><strong>{syncStatus.label}</strong><small>{syncStatus.detail}</small>
+            <div className={cn('sidebar-sync-progress', syncStatus.percent === null && 'is-indeterminate')} role="progressbar" aria-label="Health sync progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={syncStatus.percent ?? undefined}><i style={{ width: `${syncStatus.percent ?? 32}%` }} /></div>
+          </div>
+        </div>}
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" className="sidebar-user" tooltip={userName} onClick={openSettings}>
