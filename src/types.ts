@@ -31,7 +31,14 @@ export interface TrendPoint {
   sleepMinutes: number | null
   sleepScore: number | null
   sleepEfficiency: number | null
+  lightActiveMinutes?: number | null
+  moderateActiveMinutes?: number | null
+  vigorousActiveMinutes?: number | null
+  activeCalories?: number | null
+  sleepStartTime?: string | null
+  sleepEndTime?: string | null
   sleepTimeInBed?: number | null
+  sleepStageTimeline?: SleepStageSegment[]
   weight: number | null
   bodyFat: number | null
   waterMl: number | null
@@ -109,6 +116,35 @@ export interface SleepStageCounts {
   wake: number | null
 }
 
+export interface SleepSession {
+  id: string
+  isMainSleep: boolean
+  isNap: boolean
+  processed: boolean | null
+  stagesStatus: string | null
+  manuallyEdited: boolean | null
+  sleepType: string | null
+  totalMinutes: number | null
+  score: number | null
+  efficiency: number | null
+  startTime: string | null
+  endTime: string | null
+  stages: SleepStage[]
+  stageTimeline: SleepStageSegment[]
+  stageTransitions: SleepStageCounts
+  minutesToFallAsleep: number | null
+  minutesAfterWakeUp: number | null
+  timeInBed: number | null
+  minutesAwake: number | null
+  outOfBedSegments: Array<{ startTime: string; endTime: string }>
+}
+
+export interface SleepDetails {
+  hrv: Array<{ timestamp: string; value: number }>
+  spo2: Array<{ timestamp: string; value: number }>
+  breathing: Array<{ timestamp: string; full: number | null; deep: number | null; light: number | null; rem: number | null }>
+}
+
 export interface DashboardData {
   source: DataSource
   selectedDate: string
@@ -130,6 +166,11 @@ export interface DashboardData {
     features: string[]
   } | null
   activity: {
+    historyTrends?: TrendPoint[]
+    activeCalories?: number | null
+    intensityIntervals?: Array<{ startTime: string; endTime: string; level: 'light' | 'moderate' | 'vigorous' | 'sedentary' }>
+    distanceIntervals?: Array<{ startTime: string; endTime: string; value: number }>
+    zoneIntervals?: Array<{ startTime: string; endTime: string; value: number }>
     steps: number | null
     stepsGoal: number | null
     calories: number | null
@@ -176,6 +217,10 @@ export interface DashboardData {
     irregularRhythmAlerts: number | null
   }
   sleep: {
+    historyTrends?: TrendPoint[]
+    sessions?: SleepSession[]
+    mainSessionId?: string | null
+    details?: SleepDetails
     totalMinutes: number | null
     goalMinutes: number | null
     score: number | null

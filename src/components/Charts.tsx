@@ -19,8 +19,12 @@ interface BaseChartProps {
   variant?: 'line' | 'area'
   referenceBand?: { low: number | null; high: number | null }
   showRangeLabels?: boolean
+  rangeLabels?: string[]
   xDomain?: [number, number]
   minYTickStep?: number
+  showYAxis?: boolean
+  showSamplePoints?: boolean
+  scrollable?: boolean
   markers?: Array<{ x: number; label: string; color: string }>
 }
 
@@ -130,10 +134,14 @@ export function LineChart({
   ariaLabel = 'Trend over time',
   variant = 'line',
   showRangeLabels = false,
+  rangeLabels,
   referenceBand,
   xDomain,
   markers = [],
   minYTickStep = 0,
+  showYAxis = false,
+  showSamplePoints = false,
+  scrollable = false,
 }: BaseChartProps) {
   const labels = inputLabels.map(formatClockLabel)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
@@ -151,9 +159,12 @@ export function LineChart({
   // Axis labels use a 13px monospace font. Include the formatted unit and
   // the gap before the plot so leading digits stay inside the container.
   const tickLabelWidth = Math.max(...ticks.map((tick) => formatter(tick).length)) * 8
+  const drawYAxis = !compact || showYAxis
   const margin = compact
-    ? { top: 7, right: 2, bottom: showRangeLabels ? 22 : 7, left: 2 }
+    ? { top: 7, right: 2, bottom: showRangeLabels ? 22 : 7, left: showYAxis ? tickLabelWidth + 14 : 2 }
     : { top: 18, right: 14, bottom: 30, left: Math.max(48, tickLabelWidth + 18) }
+  const fixedAxisWidth = margin.left
+  if (scrollable) margin.left = 12
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
   const validX = xValues?.length === values.length && xValues.every(Number.isFinite) ? xValues : values.map((_, index) => index)
@@ -217,7 +228,14 @@ export function LineChart({
   }
 
   return (
-    <div ref={containerRef} className={`line-chart ${compact ? 'is-compact' : ''} is-${variant}`} style={{ height }}>
+    <div className={scrollable ? 'line-chart-scroll-layout' : undefined}>
+      {scrollable && drawYAxis && (
+        <svg className="line-chart-fixed-axis" width={fixedAxisWidth} height={height} aria-hidden="true">
+          {ticks.map((tick) => <text key={tick} x={fixedAxisWidth - 9} y={yFor(tick) + 3} textAnchor="end" className="chart-tick">{formatter(tick)}</text>)}
+        </svg>
+      )}
+      <div className={scrollable ? 'line-chart-scroll-track' : undefined}>
+    <div ref={containerRef} className={`line-chart ${compact ? 'is-compact' : ''} ${showYAxis ? 'has-y-axis' : ''} is-${variant}`} style={{ height, ...(scrollable ? { minWidth: Math.min(1440, Math.max(900, values.length * 5)) } : {}) }}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         role="img"
@@ -245,12 +263,12 @@ export function LineChart({
             stroke="none"
           />
         ))}
-        {!compact && ticks.map((tick, index) => {
+        {drawYAxis && ticks.map((tick, index) => {
           const y = yFor(tick)
           return (
             <g key={`${tick}-${index}`}>
               <line x1={margin.left} y1={y} x2={width - margin.right} y2={y} className="chart-gridline" />
-              <text x={margin.left - 9} y={y + 3} textAnchor="end" className="chart-tick">{formatter(tick)}</text>
+              {!scrollable && <text x={margin.left - 9} y={y + 3} textAnchor="end" className="chart-tick">{formatter(tick)}</text>}
             </g>
           )
         })}
@@ -263,7 +281,7 @@ export function LineChart({
         {segments.map((segment, index) => (
           <path key={index} d={segment.line} fill="none" stroke={color} strokeWidth={compact ? 2.4 : 2.6} strokeLinecap="round" strokeLinejoin="round" />
         ))}
-        {(!compact || band) && values.length <= 20 && values.map((value, index) => value !== null && Number.isFinite(value) ? (
+        {(!compact || band || showSamplePoints) && (values.length <= 20 || showSamplePoints) && values.map((value, index) => value !== null && Number.isFinite(value) ? (
           <circle key={index} cx={xFor(index)} cy={yFor(value)} r={index === lastValidIndex ? 4 : 2.8} fill="var(--card)" stroke={color} strokeWidth="2">
             <title>{`${labels[index] ?? `Point ${index + 1}`}: ${formatter(value)}`}</title>
           </circle>
@@ -271,7 +289,7 @@ export function LineChart({
         {!compact && labels.map((label, index) => {
           const lastIndex = labels.length - 1
           if (index !== lastIndex && (index % labelEvery !== 0 || lastIndex - index < labelEvery)) return null
-          return <text key={`${label}-${index}`} x={xFor(index)} y={height - 7} textAnchor="middle" className="chart-label">{label}</text>
+          return <text key={`${label}-${index}`} x={xFor(index)} y={height - 7} textAnchor={index === 0 ? 'start' : index === lastIndex ? 'end' : 'middle'} className="chart-label">{label}</text>
         })}
         {activeIndex !== null && activeValue !== null && Number.isFinite(activeValue) && (
           <g className="chart-active-mark" aria-hidden="true">
@@ -290,8 +308,10 @@ export function LineChart({
           <strong>{formatter(activeValue)}</strong>
         </div>
       )}
-      {compact && showRangeLabels && <CompactRangeLabels labels={labels} />}
+      {compact && showRangeLabels && <CompactRangeLabels labels={rangeLabels ?? labels} />}
       <AccessibleChartTable title={ariaLabel} labels={labels} values={values} formatter={formatter} />
+    </div>
+      </div>
     </div>
   )
 }
@@ -315,14 +335,15 @@ export function ColumnChart({
   const { containerRef, width } = useResponsiveChartWidth(valid.length > 0)
   if (!valid.length) return <div className="chart-empty" style={{ height }}>No data for this range</div>
 
-  const margin = compact
-    ? { top: 8, right: 2, bottom: showRangeLabels ? 22 : 8, left: 2 }
-    : { top: 20, right: 14, bottom: 30, left: 48 }
-  const plotWidth = width - margin.left - margin.right
-  const plotHeight = height - margin.top - margin.bottom
   const rawMax = Math.max(...valid, target ?? 0, 1)
   const step = niceStep(rawMax, 4)
   const max = Math.ceil(rawMax / step) * step
+  const tickLabelWidth = Math.max(...[0, max / 2, max].map(tick => formatter(tick).length)) * 8
+  const margin = compact
+    ? { top: 8, right: 2, bottom: showRangeLabels ? 22 : 8, left: 2 }
+    : { top: 20, right: 14, bottom: 30, left: Math.max(48, tickLabelWidth + 16) }
+  const plotWidth = Math.max(1, width - margin.left - margin.right)
+  const plotHeight = height - margin.top - margin.bottom
   const validX = xValues?.length === values.length && xValues.every(Number.isFinite) ? xValues : values.map((_, index) => index)
   const sortedX = [...validX].sort((a, b) => a - b)
   const positiveSteps = sortedX.slice(1).map((value, index) => value - sortedX[index]).filter((value) => value > 0)
@@ -530,11 +551,17 @@ const sleepTimelineConfig = {
 
 export function SleepStageTimeline({
   segments,
+  outOfBedSegments = [],
   height = 188,
 }: {
   segments: SleepStageSegment[]
+  outOfBedSegments?: Array<{ startTime: string; endTime: string }>
   height?: number
 }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const [markerLabel, setMarkerLabel] = useState<string | null>(null)
+  const [markerX, setMarkerX] = useState(0)
+  const readoutId = useId()
   const validSegments = segments
     .map((segment) => ({
       ...segment,
@@ -556,11 +583,28 @@ export function SleepStageTimeline({
   const xFor = (value: number) => margin.left + ((value - start) / Math.max(1, end - start)) * plotWidth
   const yFor = (type: SleepStageSegment['type']) => margin.top + (keys.indexOf(type) + 0.5) * rowHeight
   const middle = new Date(start + (end - start) / 2).toISOString()
+  const active = activeIndex === null ? null : validSegments[Math.min(activeIndex, validSegments.length - 1)]
+  const readout = markerLabel ?? (active ? `${sleepTimelineConfig[active.type].label} · ${formatTime(active.startTime)}–${formatTime(active.endTime)} · ${Math.round((active.end - active.start) / 60000)} min` : 'Hover over a stage, or focus the chart and use the left and right arrow keys.')
 
   return (
-    <div ref={containerRef} className="sleep-timeline-chart" style={{ height }}>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Sleep-stage timeline across ${validSegments.length} segments`}>
+    <div ref={containerRef} className="sleep-timeline-interactive"
+      onPointerLeave={event => { if (!event.currentTarget.contains(document.activeElement)) { setActiveIndex(null); setMarkerLabel(null) } }}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) { setActiveIndex(null); setMarkerLabel(null) } }}>
+      <svg style={{ height }} viewBox={`0 0 ${width} ${height}`} role="group" tabIndex={0} aria-label={`Sleep-stage timeline across ${validSegments.length} segments; use left and right arrow keys to inspect stages`} aria-describedby={readoutId}
+        onFocus={event => { if (event.target === event.currentTarget) { setMarkerLabel(null); setActiveIndex(i => i ?? 0) } }}
+        onKeyDown={event => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault(); setMarkerLabel(null)
+          setActiveIndex(i => event.key === 'Home' ? 0 : event.key === 'End' ? validSegments.length - 1 : Math.max(0, Math.min(validSegments.length - 1, (i ?? 0) + (event.key === 'ArrowRight' ? 1 : -1))))
+        }}>
         <title>Detailed sleep-stage timeline</title>
+        {outOfBedSegments.map((segment, index) => {
+          const from = Math.max(start, Date.parse(segment.startTime)), to = Math.min(end, Date.parse(segment.endTime))
+          if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return null
+          const label = `Out of bed · ${formatTime(segment.startTime)}–${formatTime(segment.endTime)} · ${Math.round((to - from) / 60000)} min`
+          const showMarker = () => { setMarkerLabel(label); setMarkerX(xFor((from + to) / 2)) }
+          return <rect key={`out-${index}`} x={xFor(from)} y={margin.top} width={Math.max(2, xFor(to) - xFor(from))} height={plotHeight} className="sleep-out-of-bed" tabIndex={0} role="img" aria-label={label} onFocus={showMarker} onPointerEnter={showMarker}><title>{label}</title></rect>
+        })}
         {keys.map((key) => (
           <g key={key}>
             <line x1={margin.left} y1={yFor(key)} x2={width - margin.right} y2={yFor(key)} className="sleep-timeline-gridline" />
@@ -575,23 +619,32 @@ export function SleepStageTimeline({
         {validSegments.map((segment, index) => {
           const durationMinutes = Math.max(1, Math.round((segment.end - segment.start) / 60_000))
           return (
+            <g key={`${segment.startTime}-${index}`} onPointerEnter={() => { setMarkerLabel(null); setActiveIndex(index) }} onClick={() => { setMarkerLabel(null); setActiveIndex(index) }}>
             <line
-              key={`${segment.startTime}-${index}`}
               x1={xFor(segment.start)}
               y1={yFor(segment.type)}
               x2={Math.max(xFor(segment.start) + 2, xFor(segment.end))}
               y2={yFor(segment.type)}
               stroke={sleepTimelineConfig[segment.type].color}
               className="sleep-timeline-segment"
+              style={activeIndex === index && !markerLabel ? { strokeWidth: 12 } : undefined}
             >
               <title>{`${sleepTimelineConfig[segment.type].label}: ${formatTime(segment.startTime)}–${formatTime(segment.endTime)}, ${durationMinutes} min`}</title>
             </line>
+            <rect x={xFor(segment.start)} y={yFor(segment.type) - 12} width={Math.max(6, xFor(segment.end) - xFor(segment.start))} height={24} fill="transparent" className="sleep-stage-hit" />
+            </g>
           )
         })}
         <text x={margin.left} y={height - 5} textAnchor="start" className="sleep-timeline-time">{formatTime(validSegments[0].startTime)}</text>
         <text x={margin.left + plotWidth / 2} y={height - 5} textAnchor="middle" className="sleep-timeline-time">{formatTime(middle)}</text>
         <text x={width - margin.right} y={height - 5} textAnchor="end" className="sleep-timeline-time">{formatTime(validSegments.at(-1)?.endTime ?? null)}</text>
       </svg>
+      {(active || markerLabel) && <div className="sleep-stage-tooltip" aria-hidden="true" style={{ left: `clamp(105px, ${(markerLabel ? markerX : xFor((active!.start + active!.end) / 2)) / width * 100}%, calc(100% - 105px))`, top: markerLabel ? margin.top : yFor(active!.type) - 14 }}>
+        <strong>{markerLabel ? 'Out of bed' : sleepTimelineConfig[active!.type].label}</strong>
+        <small>{markerLabel ? markerLabel.replace('Out of bed · ', '') : `${formatTime(active!.startTime)}–${formatTime(active!.endTime)} · ${Math.round((active!.end - active!.start) / 60000)} min`}</small>
+      </div>}
+      <p id={readoutId} className="sleep-timeline-readout sr-only" role="status">{readout}</p>
+      {outOfBedSegments.length > 0 && <p className="sleep-signal-note">Shaded dashed intervals mark recorded out-of-bed periods; they may overlap stage recordings.</p>}
     </div>
   )
 }

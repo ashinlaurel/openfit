@@ -1,5 +1,5 @@
 import { indiaDate, APP_TIME_ZONE } from '../lib/timezone'
-import type { ActivityItem, DashboardData, SleepStage, SleepStageKey, SleepStageSegment, TimePoint, TrendPoint } from '../types'
+import type { ActivityItem, DashboardData, SleepStage, SleepStageKey, SleepStageSegment, SleepSession, TimePoint, TrendPoint } from '../types'
 
 const dayMs = 86_400_000
 
@@ -17,11 +17,14 @@ function seeded(index: number, salt: number) {
 function makeTrends(selectedDate: string): TrendPoint[] {
   const end = dateFromIso(selectedDate)
   const formatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', timeZone: APP_TIME_ZONE })
-  return Array.from({ length: 14 }, (_, index) => {
-    const date = new Date(end.getTime() - (13 - index) * dayMs)
+  return Array.from({ length: 30 }, (_, offsetIndex) => {
+    const index = offsetIndex - 16
+    const date = new Date(end.getTime() - (29 - offsetIndex) * dayMs)
     const activityWave = Math.sin(index * 0.9) * 1_350
     const steps = Math.round(7_200 + activityWave + seeded(index, 2) * 3_100)
-    const sleepMinutes = Math.round(390 + seeded(index, 4) * 85)
+    const sleep = makeDemoSleep(localIso(date))
+    const sleepDay = Math.floor(Date.parse(`${localIso(date)}T12:00:00Z`) / dayMs)
+    const sleepMinutes = sleep.totalMinutes
     const activeMinutes = Math.round(38 + seeded(index, 5) * 48)
     return {
       date: localIso(date),
@@ -31,18 +34,24 @@ function makeTrends(selectedDate: string): TrendPoint[] {
       distanceKm: Number((steps * 0.00079).toFixed(2)),
       floors: Math.round(5 + seeded(index, 9) * 11),
       activeMinutes,
+      lightActiveMinutes: Math.round(90 + seeded(sleepDay, 5) * 120),
+      moderateActiveMinutes: Math.max(0, activeMinutes - 22), vigorousActiveMinutes: 22,
+      activeCalories: Math.round(200 + seeded(sleepDay, 8) * 450),
       zoneMinutes: Math.round(activeMinutes * (0.72 + seeded(index, 10) * 0.45)),
       sedentaryMinutes: Math.round(480 + seeded(index, 11) * 130),
       restingHeartRate: Math.round(59 + seeded(index, 6) * 7),
-      hrvMs: Math.round(42 + seeded(index, 12) * 14),
-      breathingRate: Number((14.1 + seeded(index, 13) * 1.5).toFixed(1)),
-      spo2: Number((96.2 + seeded(index, 14) * 1.6).toFixed(1)),
-      skinTemperature: Number((-0.35 + seeded(index, 15) * 0.7).toFixed(1)),
+      hrvMs: Math.round(42 + seeded(sleepDay, 12) * 14),
+      breathingRate: Number((14.1 + seeded(sleepDay, 13) * 1.5).toFixed(1)),
+      spo2: Number((96.2 + seeded(sleepDay, 14) * 1.6).toFixed(1)),
+      skinTemperature: Number((-0.35 + seeded(sleepDay, 15) * 0.7).toFixed(1)),
       coreTemperature: null,
       cardioScore: Math.round(49 + seeded(index, 16) * 5),
       sleepMinutes,
       sleepScore: null,
-      sleepEfficiency: Math.round(86 + seeded(index, 17) * 9),
+      sleepEfficiency: sleep.efficiency,
+      sleepTimeInBed: sleep.timeInBed,
+      sleepStartTime: sleep.startTime, sleepEndTime: sleep.endTime,
+      sleepStageTimeline: sleep.stageTimeline,
       weight: Number((72.8 - index * 0.045 + seeded(index, 3) * 0.28).toFixed(1)),
       bodyFat: Number((16.9 - index * 0.012 + seeded(index, 18) * 0.4).toFixed(1)),
       waterMl: Math.round(1_650 + seeded(index, 19) * 850),
@@ -72,28 +81,37 @@ function makeStepsSeries(): TimePoint[] {
   }))
 }
 
-const stages: SleepStage[] = [
-  { name: 'Deep', key: 'deep', minutes: 81, color: '#555b64' },
-  { name: 'Light', key: 'light', minutes: 218, color: '#858c95' },
-  { name: 'REM', key: 'rem', minutes: 96, color: '#bcc1c7' },
-  { name: 'Awake', key: 'wake', minutes: 38, color: '#363a40' },
-]
-
-function makeSleepTimeline(selectedDate: string): SleepStageSegment[] {
-  const endDate = dateFromIso(selectedDate)
-  const start = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate() - 1, 23, 42)
+function makeDemoSleep(date: string): SleepSession {
+  const epoch = Math.floor(Date.parse(`${date}T12:00:00Z`) / dayMs)
+  const asleep = Math.round(390 + seeded(epoch, 4) * 85), awake = Math.round(22 + seeded(epoch, 8) * 24)
+  const start = Date.parse(`${date}T00:00:00+05:30`) - (20 + Math.round(seeded(epoch, 9) * 70)) * 60000
   const sequence: Array<[SleepStageKey, number]> = [
     ['light', 25], ['deep', 35], ['light', 42], ['rem', 18], ['wake', 5],
     ['light', 35], ['deep', 30], ['light', 40], ['rem', 28], ['wake', 8],
-    ['light', 36], ['deep', 16], ['light', 40], ['rem', 25], ['wake', 10],
-    ['rem', 25], ['wake', 15],
+    ['light', 36], ['deep', 16], ['light', 40], ['rem', 25], ['wake', 10], ['rem', 25], ['wake', 15],
   ]
-  let cursor = start.getTime()
-  return sequence.map(([type, minutes]) => {
-    const startTime = new Date(cursor).toISOString()
-    cursor += minutes * 60_000
+  let cursor = start, asleepUsed = 0, awakeUsed = 0
+  const timeline: SleepStageSegment[] = sequence.map(([type, weight], i) => {
+    const wake = type === 'wake'
+    const target = wake ? awake : asleep, denominator = wake ? 38 : 395
+    const last = wake ? i === 16 : i === 15
+    const minutes = last ? target - (wake ? awakeUsed : asleepUsed) : Math.round(weight / denominator * target)
+    if (wake) awakeUsed += minutes; else asleepUsed += minutes
+    const startTime = new Date(cursor).toISOString(); cursor += minutes * 60000
     return { type, startTime, endTime: new Date(cursor).toISOString() }
   })
+  const stages: SleepStage[] = (['deep', 'light', 'rem', 'wake'] as const).map(key => ({
+    key, name: key === 'rem' ? 'REM' : key === 'wake' ? 'Awake' : key === 'deep' ? 'Deep' : 'Light', color: `var(--sleep-${key})`,
+    minutes: timeline.filter(s => s.type === key).reduce((sum, s) => sum + (Date.parse(s.endTime) - Date.parse(s.startTime)) / 60000, 0),
+  }))
+  return {
+    id: `demo-main-${date}`, isMainSleep: true, isNap: false, processed: true, stagesStatus: 'SUCCEEDED', manuallyEdited: false, sleepType: 'STAGES',
+    totalMinutes: asleep, score: null, efficiency: Math.round(asleep / (asleep + awake) * 100),
+    startTime: timeline[0].startTime, endTime: timeline.at(-1)!.endTime, stages, stageTimeline: timeline,
+    stageTransitions: { deep: 3, light: 6, rem: 4, wake: 4 }, minutesToFallAsleep: null, minutesAfterWakeUp: null,
+    timeInBed: asleep + awake, minutesAwake: awake,
+    outOfBedSegments: [{ startTime: timeline[9].startTime, endTime: timeline[9].endTime }],
+  }
 }
 
 function makeActivities(selectedDate: string): ActivityItem[] {
@@ -140,6 +158,7 @@ function makeActivities(selectedDate: string): ActivityItem[] {
 export function createDemoData(selectedDate = localIso()): DashboardData {
   const trends = makeTrends(selectedDate)
   const latest = trends.at(-1)!
+  const sleep = makeDemoSleep(selectedDate)
   const latestSteps = latest.steps ?? 0
   const latestSleepMinutes = latest.sleepMinutes ?? 0
   const stepsIntraday = makeStepsSeries()
@@ -167,6 +186,14 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       features: ['STEPS', 'HEART_RATE', 'SLEEP', 'SPO2', 'SKIN_TEMPERATURE', 'ACTIVE_ZONE_MINUTES'],
     },
     activity: {
+      historyTrends: trends, activeCalories: latest.activeCalories,
+      intensityIntervals: [
+        { startTime: `${selectedDate}T08:00:00+05:30`, endTime: `${selectedDate}T08:25:00+05:30`, level: 'light' },
+        { startTime: `${selectedDate}T12:10:00+05:30`, endTime: `${selectedDate}T12:25:00+05:30`, level: 'moderate' },
+        { startTime: `${selectedDate}T18:05:00+05:30`, endTime: `${selectedDate}T18:25:00+05:30`, level: 'vigorous' },
+      ],
+      distanceIntervals: Array.from({length:24}, (_,h) => ({startTime:`${selectedDate}T${String(h).padStart(2,'0')}:00:00+05:30`,endTime:new Date(Date.parse(`${selectedDate}T${String(h).padStart(2,'0')}:00:00+05:30`)+3600000).toISOString(),value: (makeStepsSeries()[h].value)*.00079})),
+      zoneIntervals: [{ startTime:`${selectedDate}T12:10:00+05:30`,endTime:`${selectedDate}T12:25:00+05:30`,value:15 }],
       steps: latest.steps,
       stepsGoal: 10_000,
       calories: latest.calories,
@@ -176,7 +203,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       floors: latest.floors,
       floorsGoal: 10,
       activeMinutes: latest.activeMinutes,
-      lightActiveMinutes: 245,
+      lightActiveMinutes: latest.lightActiveMinutes ?? null,
       moderateActiveMinutes: Math.max(0, (latest.activeMinutes ?? 0) - 22),
       vigorousActiveMinutes: 22,
       activeMinutesGoal: 60,
@@ -205,7 +232,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       spo2Min: (latest.spo2 ?? 97) - 1.8,
       spo2Max: Math.min(100, (latest.spo2 ?? 97) + 1.1),
       skinTemperature: latest.skinTemperature,
-      skinNightlyTemperatureCelsius: 33.63,
+      skinNightlyTemperatureCelsius: 33.55 + (latest.skinTemperature ?? 0),
       skinBaselineTemperatureCelsius: 33.55,
       skinTemperatureStddev30dCelsius: 0.13,
       coreTemperature: null,
@@ -216,19 +243,18 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       irregularRhythmAlerts: 0,
     },
     sleep: {
-      totalMinutes: latest.sleepMinutes,
-      goalMinutes: 480,
-      score: latest.sleepScore,
-      efficiency: latest.sleepEfficiency,
-      startTime: `${localIso(new Date(dateFromIso(selectedDate).getTime() - dayMs))}T23:42:00`,
-      endTime: `${selectedDate}T06:55:00`,
-      stages,
-      stageTimeline: makeSleepTimeline(selectedDate),
-      stageTransitions: { deep: 3, light: 6, rem: 4, wake: 4 },
-      minutesToFallAsleep: 0,
-      minutesAfterWakeUp: 0,
-      timeInBed: 433,
-      minutesAwake: 38,
+      details: {
+        hrv: Array.from({ length: Math.floor(sleep.timeInBed! / 5) }, (_, i) => ({ timestamp: new Date(Date.parse(sleep.startTime!) + i * 5 * 60000).toISOString(), value: Math.round((latest.hrvMs ?? 45) + Math.sin(i * .3) * 8) })).filter((_, i) => i < 30 || i > 36),
+        spo2: Array.from({ length: Math.floor(sleep.timeInBed!) }, (_, i) => ({ timestamp: new Date(Date.parse(sleep.startTime!) + i * 60000).toISOString(), value: Number(Math.min(100, (latest.spo2 ?? 97) + Math.sin(i * .13) * .8).toFixed(1)) })).filter((_, i) => i < 120 || i > 135),
+        breathing: [{ timestamp: sleep.endTime!, full: latest.breathingRate, deep: 13.8, light: 14.4, rem: 15.1 }],
+      },
+      ...sleep, historyTrends: trends, goalMinutes: 480, mainSessionId: sleep.id,
+      sessions: [sleep, {
+        ...sleep, id: `demo-nap-${selectedDate}`, isMainSleep: false, isNap: true, sleepType: 'CLASSIC', stagesStatus: 'REJECTED_NAP',
+        totalMinutes: 24, timeInBed: 27, minutesAwake: 3, efficiency: 89,
+        startTime: `${selectedDate}T14:10:00+05:30`, endTime: `${selectedDate}T14:37:00+05:30`,
+        stages: [], stageTimeline: [], stageTransitions: { deep: null, light: null, rem: null, wake: null }, outOfBedSegments: [],
+      }],
     },
     body: {
       weightKg: latest.weight,
@@ -239,7 +265,7 @@ export function createDemoData(selectedDate = localIso()): DashboardData {
       waterGoalMl: 2_500,
       caloriesIn: latest.caloriesIn,
     },
-    trends,
+    trends: trends.slice(-14),
     workoutCoverage: {startDate:new Date(Date.parse(`${selectedDate}T12:00:00Z`)-27*dayMs).toISOString().slice(0,10),endDate:selectedDate},
     activities,
     insights: [

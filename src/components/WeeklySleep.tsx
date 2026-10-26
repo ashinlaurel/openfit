@@ -1,44 +1,22 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
-import { ArrowLeft, ArrowRight, CalendarDays, Clock3, Moon, Sunrise } from 'lucide-react'
+import { useEffect, useState, type CSSProperties } from 'react'
+import { Clock3, Moon, Sunrise } from 'lucide-react'
 import type { DashboardData } from '@/types'
-import { createDemoData, localIso } from '@/data/demo'
-import { normalizeFitbitData } from '@/data/normalize'
 import { compactMinutes, formatDate } from '@/lib/format'
 import { offsetDate } from '@/lib/research-insights'
 import { sleepClock, sleepWeek } from '@/lib/sleep-week'
 import { calculateSleepScore, sleepScoreForTrend } from '@/lib/sleep-score'
 
-export function WeeklySleep({ data }: { data: DashboardData }) {
-  const [endDate, setEndDate] = useState(data.selectedDate)
-  const [history, setHistory] = useState<{ key: string; days: DashboardData[]; error: boolean } | null>(null)
-  const today = localIso()
-  const firstDate = offsetDate(endDate, -6)
-  const key = `${data.source}:${data.generatedAt}:${data.selectedDate}:${endDate}`
-  useEffect(() => { setEndDate(data.selectedDate) }, [data.selectedDate])
-  useEffect(() => {
-    let canceled = false
-    if (data.source === 'demo') {
-      setHistory({ key, days: Array.from({ length: 7 }, (_, i) => createDemoData(offsetDate(endDate, -i))), error: false })
-    } else if (window.fitbit) {
-      void window.fitbit.getCachedArchive().then(archive => {
-        const days = Object.values(archive.days).filter(day => day.date >= firstDate && day.date <= endDate).map(normalizeFitbitData)
-        if (!canceled) setHistory({ key, days, error: false })
-      }).catch(() => { if (!canceled) setHistory({ key, days: [], error: true }) })
-    } else setHistory({ key, days: [], error: false })
-    return () => { canceled = true }
-  }, [key, data.source, firstDate, endDate])
-  const ready = history?.key === key
-  const timezone = useMemo(() => {
-    const device = Intl.DateTimeFormat().resolvedOptions().timeZone
-    try { new Intl.DateTimeFormat('en-US', { timeZone: data.profile.timezone || device }); return data.profile.timezone || device } catch { return device }
-  }, [data.profile.timezone])
-  const result = useMemo(() => sleepWeek([
-    ...(ready ? history.days : []).filter(day => day.selectedDate !== data.selectedDate),
-    data,
-  ], endDate, timezone), [data, history, ready, endDate, timezone])
+export function WeeklySleep({ data, days, endDate, dayCount, ready, error }: {
+  data: DashboardData; days: DashboardData[]; endDate: string; dayCount: number; ready: boolean; error: boolean
+}) {
+  const firstDate = offsetDate(endDate, 1 - dayCount)
+  let timezone = data.profile.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone
+  try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }) } catch { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone }
+  const result = sleepWeek(days, endDate, timezone, dayCount)
   const [selected, setSelected] = useState<string | null>(null)
+  useEffect(() => setSelected(null), [endDate, dayCount])
   const current = result.nights.find(n => n.date === selected)
-  const daysByDate = new Map([...(ready ? history.days : []), data].map(day => [day.selectedDate, day]))
+  const daysByDate = new Map([...days, data].map(day => [day.selectedDate, day]))
   const currentDay = current ? daysByDate.get(current.date) : undefined
   const scoreForDate = (date: string) => {
     const day = daysByDate.get(date)
@@ -48,13 +26,13 @@ export function WeeklySleep({ data }: { data: DashboardData }) {
   }
   const range = `${formatDate(firstDate, { month: 'short', day: 'numeric' })} – ${formatDate(endDate, { month: 'short', day: 'numeric', year: 'numeric' })}`
   const dayOffset = (value: number) => value < 0 ? ' (previous day)' : value >= 1440 ? ' (next day)' : ''
-  const changeEnd = (date: string) => { if (date && date <= today) { setEndDate(date); setSelected(null) } }
 
-  return <section className="weekly-sleep" aria-label="Weekly sleep timing" aria-busy={!ready}>
-    <header className="weekly-sleep-header"><div><span className="weekly-sleep-eyebrow"><Moon /> THE SHAPE OF YOUR NIGHTS</span><h2>A week of rest.</h2><p>Bedtime, wake time, and the space in between.</p></div><div className="weekly-sleep-controls"><button aria-label="Previous sleep week" onClick={() => changeEnd(offsetDate(endDate, -7))}><ArrowLeft /></button><label><CalendarDays /><span>{range}</span><input type="date" aria-label="Last day of sleep week" max={today} value={endDate} onChange={e => changeEnd(e.target.value)} /></label><button aria-label="Next sleep week" disabled={endDate >= today} onClick={() => changeEnd(offsetDate(endDate, 7) > today ? today : offsetDate(endDate, 7))}><ArrowRight /></button></div></header>
-    <div className="weekly-sleep-summary"><div><span className="weekly-sleep-summary-icon"><Clock3 /></span><div><small>AVERAGE TIME ASLEEP</small><strong>{result.averageAsleep === null ? '—' : compactMinutes(Math.round(result.averageAsleep))}</strong></div></div><div><span className="weekly-sleep-summary-icon"><Moon /></span><div><small>NIGHTS WITH TIMING</small><strong>{result.timedCount}<span> / 7 nights</span></strong></div></div><div className="weekly-sleep-source"><i />{data.source === 'demo' ? 'Demo data' : 'From your local archive'}<small>{timezone}</small></div></div>
+
+  return <section className="weekly-sleep" aria-label="Sleep timing" aria-busy={!ready}>
+    <header className="weekly-sleep-header"><div><span className="weekly-sleep-eyebrow"><Moon /> YOUR SLEEP SCHEDULE</span><h2>Sleep timing</h2><p>{range} · Main sleep only; bars include awake periods.</p></div></header>
+    <div className="weekly-sleep-summary"><div><span className="weekly-sleep-summary-icon"><Clock3 /></span><div><small>AVERAGE TIME ASLEEP</small><strong>{result.averageAsleep === null ? '—' : compactMinutes(Math.round(result.averageAsleep))}</strong></div></div><div><span className="weekly-sleep-summary-icon"><Moon /></span><div><small>NIGHTS WITH TIMING</small><strong>{result.timedCount}<span> / {dayCount} nights</span></strong></div></div><div className="weekly-sleep-source"><i />{data.source === 'demo' ? 'Demo data' : 'From your local archive'}<small>{timezone}</small></div></div>
     {!ready && <p className="weekly-sleep-status" role="status">Loading your local nights…</p>}
-    {ready && history.error && <p className="weekly-sleep-status" role="status">Local history could not be loaded. Showing any available selected-day data.</p>}
+    {ready && error && <p className="weekly-sleep-status" role="status">Local history could not be loaded. Showing any available selected-day data.</p>}
     <div className="weekly-sleep-scroll" role="region" aria-label="Sleep bars; scroll horizontally on smaller screens" tabIndex={0}>
       <div className="weekly-sleep-chart" style={{ '--sleep-grid-step': `${100 / (result.ticks.length - 1)}%` } as CSSProperties}>
         <div className="weekly-sleep-axis"><span>WAKE DAY</span><div>{result.ticks.map(tick => <span key={tick} style={{ left: `${(tick-result.min)/(result.max-result.min)*100}%` }} className={tick % 1440 === 0 ? 'is-midnight' : ''}>{tick % 1440 === 0 ? 'Midnight' : sleepClock(tick).replace(':00','')}</span>)}</div><span>TIME ASLEEP</span></div>
@@ -72,7 +50,7 @@ export function WeeklySleep({ data }: { data: DashboardData }) {
       </div>
     </div>
     {current && <div className="weekly-sleep-night-detail" role="status"><strong>{formatDate(current.date,{weekday:'long',month:'short',day:'numeric'})}</strong>{current.start !== null && <span><Moon /> Bedtime {sleepClock(current.start)}{dayOffset(current.start)}</span>}{current.end !== null && <span><Sunrise /> Wake {sleepClock(current.end)}{dayOffset(current.end)}</span>}<span><Clock3 /> {current.asleep === null ? 'Asleep time unavailable' : `${compactMinutes(current.asleep)} asleep`}</span>{currentDay && currentDay.sleep.efficiency !== null && <span>{currentDay.sleep.efficiency}% efficiency</span>}{currentDay && currentDay.sleep.score !== null && <span>{currentDay.sleep.score} score</span>}{currentDay?.sleep.stages.filter(stage => stage.minutes > 0).map(stage => <span key={stage.name}>{stage.name} {compactMinutes(stage.minutes)}</span>)}</div>}
-    <footer><span><i/> Bedtime → wake time <small>including awake periods</small></span><p>Time asleep is the recorded sleep duration. {result.durationCount}/7 nights have duration data. Missing nights stay empty.</p></footer>
-    <details className="weekly-sleep-exact"><summary>View exact times</summary><div className="weekly-sleep-table-scroll"><table><caption className="sr-only">Weekly sleep timing, {range}, {timezone}</caption><thead><tr><th scope="col">Wake day</th><th scope="col">Bedtime</th><th scope="col">Wake time</th><th scope="col">Time asleep</th></tr></thead><tbody>{result.nights.map(n => <tr key={n.date}><th scope="row">{n.date}</th><td>{n.start === null ? 'Unavailable' : `${sleepClock(n.start)}${dayOffset(n.start)}`}</td><td>{n.end === null ? 'Unavailable' : `${sleepClock(n.end)}${dayOffset(n.end)}`}</td><td>{n.asleep === null ? 'Unavailable' : compactMinutes(n.asleep)}</td></tr>)}</tbody></table></div></details>
+    <footer><span><i/> Bedtime → wake time <small>including awake periods</small></span><p>Time asleep is the recorded sleep duration. {result.durationCount}/{dayCount} nights have duration data. Missing nights stay empty.</p></footer>
+    <details className="weekly-sleep-exact"><summary>View exact times</summary><div className="weekly-sleep-table-scroll"><table><caption className="sr-only">Sleep timing, {range}, {timezone}</caption><thead><tr><th scope="col">Wake day</th><th scope="col">Bedtime</th><th scope="col">Wake time</th><th scope="col">Time asleep</th></tr></thead><tbody>{result.nights.map(n => <tr key={n.date}><th scope="row">{n.date}</th><td>{n.start === null ? 'Unavailable' : `${sleepClock(n.start)}${dayOffset(n.start)}`}</td><td>{n.end === null ? 'Unavailable' : `${sleepClock(n.end)}${dayOffset(n.end)}`}</td><td>{n.asleep === null ? 'Unavailable' : compactMinutes(n.asleep)}</td></tr>)}</tbody></table></div></details>
   </section>
 }

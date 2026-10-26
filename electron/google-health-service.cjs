@@ -217,21 +217,30 @@ async function listData(accessToken, type, recordType, start, end, dataSourceFam
   return merged
 }
 
-function dailyRollup(accessToken, type, start, end) {
-  return request(`/users/me/dataTypes/${type}/dataPoints:dailyRollUp`, accessToken, {
-    method: 'POST',
-    body: {
-      range: {
-        start: civilDateTime(start),
-        end: civilDateTime(shiftIso(end, -1), true),
-      },
-      windowSizeDays: 1,
-    },
-  })
+async function dailyRollup(accessToken, type, start, end) {
+  const limit = ['calories-in-heart-rate-zone', 'heart-rate', 'active-minutes', 'total-calories'].includes(type) ? 14 : 90
+  const merged = { rollupDataPoints: [] }
+  for (let cursor = start; cursor < end;) {
+    const until = shiftIso(cursor, limit) < end ? shiftIso(cursor, limit) : end
+    let pageToken = '', pages = 0
+    do {
+      const page = await request(`/users/me/dataTypes/${type}/dataPoints:dailyRollUp`, accessToken, {
+        method: 'POST', body: {
+          range: { start: civilDateTime(cursor), end: civilDateTime(shiftIso(until, -1), true) },
+          windowSizeDays: 1, pageSize: 100, ...(pageToken ? { pageToken } : {}),
+        },
+      })
+      merged.rollupDataPoints.push(...(page.rollupDataPoints || []))
+      pageToken = page.nextPageToken || ''
+      if (++pages >= 100 && pageToken) throw new Error(`Too many rollup pages for ${type}.`)
+    } while (pageToken)
+    cursor = until
+  }
+  return merged
 }
 
 async function syncGoogleHealthData(accessToken, selectedDate, onProgress = () => {}) {
-  const trendStart = shiftIso(selectedDate, -13)
+  const trendStart = shiftIso(selectedDate, -29)
   const dayAfter = shiftIso(selectedDate, 1)
   const ecgStart = shiftIso(selectedDate, -90)
   const jobs = [
@@ -242,6 +251,7 @@ async function syncGoogleHealthData(accessToken, selectedDate, onProgress = () =
     ['userInfo', () => request('https://www.googleapis.com/oauth2/v3/userinfo', accessToken)],
     ['stepsDaily', () => dailyRollup(accessToken, 'steps', trendStart, dayAfter)],
     ['caloriesDaily', () => dailyRollup(accessToken, 'total-calories', trendStart, dayAfter)],
+    ['activeEnergyDaily', () => dailyRollup(accessToken, 'active-energy-burned', trendStart, dayAfter)],
     ['distanceDaily', () => dailyRollup(accessToken, 'distance', trendStart, dayAfter)],
     ['floorsDaily', () => dailyRollup(accessToken, 'floors', trendStart, dayAfter)],
     ['activeMinutesDaily', () => dailyRollup(accessToken, 'active-minutes', trendStart, dayAfter)],
@@ -254,14 +264,22 @@ async function syncGoogleHealthData(accessToken, selectedDate, onProgress = () =
     ['coreTemperatureDaily', () => dailyRollup(accessToken, 'core-body-temperature', trendStart, dayAfter)],
     ['stepsIntradayRaw', () => listData(accessToken, 'steps', 'interval', selectedDate, dayAfter, 'google-wearables')],
     ['sedentaryIntervalsRaw', () => listData(accessToken, 'sedentary-period', 'interval', trendStart, dayAfter, 'google-wearables')],
+    ['movementIntensityRaw', () => listData(accessToken, 'activity-level', 'interval', selectedDate, dayAfter, 'google-wearables')],
+    ['movementDistanceRaw', () => listData(accessToken, 'distance', 'interval', selectedDate, dayAfter, 'google-wearables')],
+    ['movementZonesRaw', () => listData(accessToken, 'active-zone-minutes', 'interval', selectedDate, dayAfter, 'google-wearables')],
     ['heartIntradayRaw', () => listData(accessToken, 'heart-rate', 'sample', selectedDate, dayAfter, 'google-wearables')],
     ['restingHeartRaw', () => listData(accessToken, 'daily-resting-heart-rate', 'daily', trendStart, dayAfter)],
     ['hrvRaw', () => listData(accessToken, 'daily-heart-rate-variability', 'daily', trendStart, dayAfter)],
     ['spo2Raw', () => listData(accessToken, 'daily-oxygen-saturation', 'daily', trendStart, dayAfter)],
     ['breathingRaw', () => listData(accessToken, 'daily-respiratory-rate', 'daily', trendStart, dayAfter)],
     ['skinTemperatureRaw', () => listData(accessToken, 'daily-sleep-temperature-derivations', 'daily', trendStart, dayAfter)],
+    ['sleepHrvRaw', () => listData(accessToken, 'heart-rate-variability', 'sample', shiftIso(selectedDate, -1), dayAfter)],
+    ['sleepSpo2Raw', () => listData(accessToken, 'oxygen-saturation', 'sample', shiftIso(selectedDate, -1), dayAfter)],
+    ['sleepBreathingRaw', () => listData(accessToken, 'respiratory-rate-sleep-summary', 'sample', shiftIso(selectedDate, -1), dayAfter)],
     ['cardioRaw', () => listData(accessToken, 'daily-vo2-max', 'daily', trendStart, dayAfter)],
-    ['sleepRaw', () => listData(accessToken, 'sleep', 'sleep', trendStart, dayAfter, 'google-wearables')],
+    // Phone edits/splits can replace wearable sessions with manual Google
+    // records. Reconcile both so the deleted original is not resurrected.
+    ['sleepRaw', () => listData(accessToken, 'sleep', 'sleep', trendStart, dayAfter, 'google-sources')],
     ['activitiesRaw', () => listData(accessToken, 'exercise', 'session', shiftIso(selectedDate, -27), dayAfter, 'google-wearables')],
     ['ecgRaw', () => listData(accessToken, 'electrocardiogram', 'ecg', ecgStart, dayAfter, 'all-sources', 'list')],
     ['irnProfileRaw', () => request('/users/me/irnProfile', accessToken)],
@@ -376,20 +394,26 @@ function toLegacySleep(point) {
       seconds: Number.isFinite(seconds) ? Math.max(0, seconds) : null,
     }
   }).filter(Boolean)
-  const asleep = numeric(summary.minutesAsleep) ?? 0
+  const asleep = numeric(summary.minutesAsleep)
   const period = numeric(summary.minutesInSleepPeriod)
   const endCivil = sleep.interval?.civilEndTime
   const dateOfSleep = dateFromCivil(endCivil) || indiaTimestamp(sleep.interval?.endTime).slice(0, 10)
   return {
     logId: point.dataPointName ?? point.name,
     dateOfSleep,
-    isMainSleep: sleep.metadata?.nap !== true,
+    isMainSleep: typeof sleep.metadata?.mainSleep === 'boolean' ? sleep.metadata.mainSleep : undefined,
+    isNap: sleep.metadata?.nap === true,
+    processed: typeof sleep.metadata?.processed === 'boolean' ? sleep.metadata.processed : null,
+    stagesStatus: sleep.metadata?.stagesStatus || null,
+    manuallyEdited: typeof sleep.metadata?.manuallyEdited === 'boolean' ? sleep.metadata.manuallyEdited : null,
+    sleepType: sleep.type || null,
+    outOfBedSegments: Array.isArray(sleep.outOfBedSegments) ? sleep.outOfBedSegments : [],
     minutesAsleep: asleep,
     minutesAwake: numeric(summary.minutesAwake),
-    minutesToFallAsleep: numeric(summary.minutesToFallAsleep),
-    minutesAfterWakeUp: numeric(summary.minutesAfterWakeUp),
+    minutesToFallAsleep: numeric(summary.minutesToFallAsleep) === 0 && sleep.metadata?.manuallyEdited !== true ? null : numeric(summary.minutesToFallAsleep),
+    minutesAfterWakeUp: numeric(summary.minutesAfterWakeUp) === 0 && sleep.metadata?.manuallyEdited !== true ? null : numeric(summary.minutesAfterWakeUp),
     timeInBed: period,
-    efficiency: period && period > 0 ? Math.round(asleep / period * 100) : null,
+    efficiency: period && period > 0 && asleep !== null ? Math.round(asleep / period * 100) : null,
     startTime: sleep.interval?.startTime || null,
     endTime: sleep.interval?.endTime || null,
     levels: { summary: stageMap, data: stageTimeline },
@@ -399,6 +423,7 @@ function toLegacySleep(point) {
 function translateGoogleHealth(raw, selectedDate) {
   const steps = dailyMap(raw.stepsDaily, (point) => numeric(point.steps?.countSum))
   const calories = dailyMap(raw.caloriesDaily, (point) => numeric(point.totalCalories?.kcalSum))
+  const activeEnergy = dailyMap(raw.activeEnergyDaily, point => numeric(point.activeEnergyBurned?.kcalSum))
   const distance = dailyMap(raw.distanceDaily, (point) => numeric(point.distance?.millimetersSum, (value) => value / 1_000_000))
   const floors = dailyMap(raw.floorsDaily, (point) => numeric(point.floors?.countSum))
   const activeMinutes = dailyMap(raw.activeMinutesDaily, (point) => {
@@ -415,7 +440,7 @@ function translateGoogleHealth(raw, selectedDate) {
   const coreTemperature = dailyMap(raw.coreTemperatureDaily, (point) => numeric(point.coreBodyTemperature?.temperatureCelsiusAvg))
   const restingHeart = dailyRecordMap(raw.restingHeartRaw, 'dailyRestingHeartRate', (record) => numeric(record?.beatsPerMinute))
   const hrv = dailyRecordMap(raw.hrvRaw, 'dailyHeartRateVariability', (record) => ({
-    averageMs: numeric(record?.averageHeartRateVariabilityMilliseconds ?? record?.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds),
+    averageMs: numeric(record?.averageHeartRateVariabilityMilliseconds),
     deepSleepRmssdMs: numeric(record?.deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds),
     entropy: numeric(record?.entropy),
     nonRemHeartRate: numeric(record?.nonRemHeartRateBeatsPerMinute),
@@ -440,13 +465,19 @@ function translateGoogleHealth(raw, selectedDate) {
   const selectedActivityLevels = selected(activeMinutes, selectedDate)
   const todayActivityLevels = selectedActivityLevels || {}
   const sleepRecords = dataPoints(raw.sleepRaw).map(toLegacySleep)
+  // Older responses may omit mainSleep. Select one session per wake day,
+  // preferring staged non-naps, then duration. Preserve explicit provider flags.
+  for (const date of new Set(sleepRecords.map(item => item.dateOfSleep))) {
+    const sessions = sleepRecords.filter(item => item.dateOfSleep === date)
+    const main = sessions.find(item => item.isMainSleep === true)
+      || [...sessions].sort((a, b) => Number(!b.isNap && (b.sleepType === 'STAGES' || b.levels.data.some(s => s.level === 'deep' || s.level === 'rem'))) - Number(!a.isNap && (a.sleepType === 'STAGES' || a.levels.data.some(s => s.level === 'deep' || s.level === 'rem'))) || (b.minutesAsleep ?? 0) - (a.minutesAsleep ?? 0))[0]
+    for (const session of sessions) session.isMainSleep = session === main
+  }
   const selectedSleepRecords = sleepRecords.filter((item) => item.dateOfSleep === selectedDate)
-  const selectedSleep = selectedSleepRecords.find((item) => item.isMainSleep)
-    || selectedSleepRecords.sort((a, b) => b.minutesAsleep - a.minutesAsleep)[0]
-    || null
   const allDates = [...new Set([
     ...steps.keys(),
     ...calories.keys(),
+    ...activeEnergy.keys(),
     ...distance.keys(),
     ...floors.keys(),
     ...activeMinutes.keys(),
@@ -586,15 +617,21 @@ function translateGoogleHealth(raw, selectedDate) {
     activity: { summary: {
       steps: todaySteps,
       caloriesOut: todayCalories,
+      activeCalories: selected(activeEnergy, selectedDate),
       distances: [{ activity: 'total', distance: todayDistance }],
       floors: todayFloors,
-      lightlyActiveMinutes: selectedActivityLevels === null ? null : numeric(todayActivityLevels.LIGHT) ?? 0,
-      fairlyActiveMinutes: selectedActivityLevels === null ? null : numeric(todayActivityLevels.MODERATE) ?? 0,
-      veryActiveMinutes: selectedActivityLevels === null ? null : numeric(todayActivityLevels.VIGOROUS) ?? 0,
+      lightlyActiveMinutes: numeric(todayActivityLevels.LIGHT),
+      fairlyActiveMinutes: numeric(todayActivityLevels.MODERATE),
+      veryActiveMinutes: numeric(todayActivityLevels.VIGOROUS),
       activeZoneMinutes: { totalMinutes: todayZone },
       sedentaryMinutes: todaySedentary,
     } },
     activityGoals: { goals: {} },
+    movementSignals: {
+      intensity: dataPoints(raw.movementIntensityRaw).map(point => point.activityLevel).filter(Boolean),
+      distance: dataPoints(raw.movementDistanceRaw).map(point => point.distance).filter(Boolean),
+      zones: dataPoints(raw.movementZonesRaw).map(point => point.activeZoneMinutes).filter(Boolean),
+    },
     sedentaryIntervals: { intervals: dataPoints(raw.sedentaryIntervalsRaw).map(point => point.sedentaryPeriod?.interval).filter(interval => interval?.startTime && interval?.endTime).map(interval => ({ startTime: interval.startTime, endTime: interval.endTime })) },
     stepsIntraday: { 'activities-steps-intraday': { dataset: stepPoints } },
     caloriesIntraday: { 'activities-calories-intraday': { dataset: [] } },
@@ -602,7 +639,12 @@ function translateGoogleHealth(raw, selectedDate) {
       'activities-heart': [{ dateTime: selectedDate, value: { restingHeartRate: selected(restingHeart, selectedDate) } }],
       'activities-heart-intraday': { dataset: heartPoints },
     },
-    sleep: { sleep: selectedSleep ? [selectedSleep] : [] },
+    sleep: { sleep: selectedSleepRecords },
+    sleepDetails: {
+      hrv: dataPoints(raw.sleepHrvRaw).map(point => point.heartRateVariability).filter(Boolean),
+      spo2: dataPoints(raw.sleepSpo2Raw).map(point => point.oxygenSaturation).filter(Boolean),
+      breathing: dataPoints(raw.sleepBreathingRaw).map(point => point.respiratoryRateSleepSummary).filter(Boolean),
+    },
     sleepTrend: { sleep: sleepRecords },
     sleepGoal: { goal: {} },
     stepsTrend: { 'activities-steps': allDates.map((date) => ({ dateTime: date, value: steps.get(date) })) },
@@ -611,6 +653,10 @@ function translateGoogleHealth(raw, selectedDate) {
     metricTrends: { values: allDates.map((date) => ({
       dateTime: date,
       distanceKm: distance.get(date) ?? null,
+      activeCalories: activeEnergy.get(date) ?? null,
+      lightActiveMinutes: numeric(activeMinutes.get(date)?.LIGHT),
+      moderateActiveMinutes: numeric(activeMinutes.get(date)?.MODERATE),
+      vigorousActiveMinutes: numeric(activeMinutes.get(date)?.VIGOROUS),
       floors: floors.get(date) ?? null,
       activeMinutes: activeMinutesFor(date),
       zoneMinutes: zoneMinutes.get(date) ?? null,
@@ -671,5 +717,5 @@ module.exports = {
   refreshAccessToken,
   revokeToken,
   syncData: syncGoogleHealthData,
-  __test: { translateGoogleHealth, dateFromCivil, durationSeconds },
+  __test: { dailyRollup, translateGoogleHealth, dateFromCivil, durationSeconds },
 }

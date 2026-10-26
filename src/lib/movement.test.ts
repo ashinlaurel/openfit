@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { movementHours, movementWindow, workdaySettings } from './movement'
+import { movementHours, movementWindow, workdaySettings, defaultWorkday, workdayAverages } from './movement'
 const date = '2026-06-22'
 const settings = { start:9, end:18, threshold:30 }
 const interval = (start: string, end: string) => ({ startTime:start, endTime:end })
@@ -47,7 +47,19 @@ describe('workday movement', () => {
     expect(hours[10].steps).toBe(30)
   })
   it('rejects corrupt settings', () => {
-    expect(workdaySettings({start:18,end:9,threshold:30})).toEqual(settings)
-    expect(workdaySettings(null)).toEqual(settings)
+    expect(workdaySettings({start:18,end:9,threshold:30})).toEqual(defaultWorkday)
+    expect(workdaySettings(null)).toEqual(defaultWorkday)
   })
+})
+
+it('averages prior recorded workdays, excludes the selected date, and preserves zero stretch counts', () => {
+  const periods = [
+    interval('2026-06-21T10:00:00Z', '2026-06-21T10:20:00Z'),
+    interval('2026-06-20T10:00:00Z', '2026-06-20T11:00:00Z'),
+    interval('2026-06-22T10:00:00Z', '2026-06-22T18:00:00Z'),
+    interval('2026-06-10T10:00:00Z', '2026-06-10T18:00:00Z'),
+  ]
+  expect(workdayAverages(periods, date, 'UTC', settings)).toEqual({ count: 2, minutes: 40, longest: 40, longCount: .5 })
+  expect(workdayAverages([], date, 'UTC', settings)).toEqual({ count: 0, minutes: null, longest: null, longCount: null })
+  expect(workdayAverages(periods, date, 'UTC', { start: 12, end: 18, threshold: 30 }).count).toBe(0)
 })

@@ -5,7 +5,7 @@ import type { RawFitbitPayload } from '../types'
 
 describe('normalizeFitbitData', () => {
   it('keeps provider and OpenFit scores separate and uses the same inputs for historical nights', () => {
-    const record = { dateOfSleep: '2026-10-24', isMainSleep: true, minutesAsleep: 430, timeInBed: 444, efficiency: 97, sleepScore: 72 }
+    const record = { dateOfSleep: '2026-10-24', isMainSleep: true, minutesAsleep: 430, timeInBed: 444, efficiency: 97, sleepScore: 72, levels: { data: [{ level: 'deep', dateTime: '2026-10-23T22:00:00Z', seconds: 4620 }, { level: 'light', dateTime: '2026-10-23T23:17:00Z', seconds: 14940 }, { level: 'wake', dateTime: '2026-10-24T03:26:00Z', seconds: 840 }, { level: 'rem', dateTime: '2026-10-24T03:40:00Z', seconds: 6240 }] } }
     const payload: RawFitbitPayload = {
       source: 'google-health', date: '2026-10-24', generatedAt: '2026-10-25T00:00:00Z',
       endpoints: { sleep: { sleep: [record] }, sleepTrend: { sleep: [record] } }, errors: [],
@@ -14,8 +14,8 @@ describe('normalizeFitbitData', () => {
     const data = normalizeFitbitData(payload)
     expect(data.sleep.score).toBe(72)
     expect(data.trends[0].sleepScore).toBe(72)
-    expect(calculateSleepScore(data.sleep).value).toBe(93)
-    expect(sleepScoreForTrend(data.trends[0])).toBe(93)
+    expect(calculateSleepScore(data.sleep).value).toBe(79)
+    expect(sleepScoreForTrend(data.trends[0])).toBe(79)
     expect(record.sleepScore).toBe(72)
   })
   it('normalizes legacy Fitbit responses without inventing missing metrics', () => {
@@ -266,4 +266,28 @@ describe('Workout normalization',()=>{
     expect(result.health.heartRateSamples).toEqual([{timestamp:'2026-06-22T23:30:00Z',value:120}])
     expect(result.workoutCoverage?.startDate).toBe('2026-05-27')
   })
+})
+
+it('normalizes all sleep sessions and validated timestamped overnight samples', () => {
+  const payload: RawFitbitPayload = { source: 'google-health', date: '2026-10-25', generatedAt: '2026-10-25T10:00:00Z', errors: [], rateLimit: { limit: null, remaining: null, resetSeconds: null }, endpoints: {
+    sleep: { sleep: [
+      { logId: 'nap', isMainSleep: false, isNap: true, sleepType: 'CLASSIC', minutesAsleep: 24, minutesToFallAsleep: 0, levels: { data: [{ level: 'asleep', dateTime: '2026-10-25T10:00:00Z', seconds: 1440 }] } },
+      { logId: 'main', isMainSleep: true, processed: false, stagesStatus: 'REJECTED_COVERAGE', minutesAsleep: 420, minutesToFallAsleep: 0 },
+      { logId: 'manual', manuallyEdited: true, minutesToFallAsleep: 0 },
+    ] },
+    hrv: { hrv: [{ value: { deepRmssd: 52 } }] },
+    sleepDetails: {
+      hrv: [ { sampleTime: { physicalTime: '2026-10-25T01:00:00Z' }, rootMeanSquareOfSuccessiveDifferencesMilliseconds: 35 }, { sampleTime: { physicalTime: 'bad' }, rootMeanSquareOfSuccessiveDifferencesMilliseconds: 40 } ],
+      spo2: [ { sampleTime: { physicalTime: '2026-10-25T01:00:00Z' }, percentage: 98 }, { sampleTime: { physicalTime: '2026-10-25T01:01:00Z' }, percentage: 101 } ],
+      breathing: [{ sampleTime: { physicalTime: '2026-10-25T01:00:00Z' }, fullSleepStats: { breathsPerMinute: 15 }, deepSleepStats: { breathsPerMinute: 14 } }],
+    },
+  } }
+  const data = normalizeFitbitData(payload)
+  expect(data.sleep.mainSessionId).toBe('main')
+  expect(data.sleep.sessions).toHaveLength(3)
+  expect(data.sleep.minutesToFallAsleep).toBeNull()
+  expect(data.sleep.sessions![0].stageTimeline).toEqual([])
+  expect(data.sleep.sessions![2].minutesToFallAsleep).toBe(0)
+  expect(data.health.hrvMs).toBeNull()
+  expect(data.sleep.details).toMatchObject({ hrv: [{ timestamp: '2026-10-25T01:00:00Z', value: 35 }], spo2: [{ timestamp: '2026-10-25T01:00:00Z', value: 98 }], breathing: [{ full: 15, deep: 14, light: null, rem: null }] })
 })

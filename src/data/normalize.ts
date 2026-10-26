@@ -10,6 +10,8 @@ import type {
   SleepStageKey,
   SleepStageSegment,
   SleepStage,
+  SleepSession,
+  SleepDetails,
   TimePoint,
   TrendPoint,
 } from '../types'
@@ -81,7 +83,46 @@ function readTrend(input: unknown, key: string) {
 
 function mainSleep(input: unknown) {
   const records = asArray(asObject(input).sleep)
-  return records.find((item) => item.isMainSleep) ?? records[0] ?? null
+  return records.find((item) => item.isMainSleep) ?? [...records].sort((a, b) => Number(b.minutesAsleep ?? 0) - Number(a.minutesAsleep ?? 0))[0] ?? null
+}
+
+function normalizeSleepSession(record: Json, index: number, google: boolean): SleepSession {
+  const stageTimeline = record.sleepType === 'CLASSIC' || record.processed === false ? [] : sleepStageTimeline(record)
+  const latency = (value: unknown) => google && numeric(value) === 0 && record.manuallyEdited !== true ? null : numeric(value)
+  return {
+    id: String(record.logId ?? `${record.startTime ?? 'sleep'}-${index}`),
+    isMainSleep: record.isMainSleep === true, isNap: record.isNap === true,
+    processed: typeof record.processed === 'boolean' ? record.processed : null,
+    stagesStatus: typeof record.stagesStatus === 'string' ? record.stagesStatus : null,
+    manuallyEdited: typeof record.manuallyEdited === 'boolean' ? record.manuallyEdited : null,
+    sleepType: typeof record.sleepType === 'string' ? record.sleepType : null,
+    totalMinutes: numeric(record.minutesAsleep), score: numeric(record.sleepScore), efficiency: numeric(record.efficiency),
+    startTime: record.startTime ?? null, endTime: record.endTime ?? null,
+    stages: sleepStages(record), stageTimeline, stageTransitions: sleepStageTransitions(record, stageTimeline),
+    minutesToFallAsleep: latency(record.minutesToFallAsleep), minutesAfterWakeUp: latency(record.minutesAfterWakeUp),
+    timeInBed: numeric(record.timeInBed), minutesAwake: numeric(record.minutesAwake),
+    outOfBedSegments: asArray(record.outOfBedSegments).filter(item => Number.isFinite(Date.parse(item.startTime)) && Date.parse(item.endTime) > Date.parse(item.startTime)).map(item => ({ startTime: item.startTime, endTime: item.endTime })),
+  }
+}
+
+function normalizeSleepDetails(input: unknown): SleepDetails {
+  const raw = asObject(input)
+  const samples = (key: string, field: string) => {
+    const unique = new Map<string, { timestamp: string; value: number }>()
+    for (const item of asArray(raw[key])) {
+      const timestamp = item.sampleTime?.physicalTime, value = numeric(item[field])
+      if (typeof timestamp === 'string' && Number.isFinite(Date.parse(timestamp)) && value !== null && value > 0 && (key !== 'spo2' || value <= 100)) unique.set(timestamp, { timestamp, value })
+    }
+    return [...unique.values()].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+  }
+  return {
+    hrv: samples('hrv', 'rootMeanSquareOfSuccessiveDifferencesMilliseconds'),
+    spo2: samples('spo2', 'percentage'),
+    breathing: asArray(raw.breathing).filter(item => Number.isFinite(Date.parse(item.sampleTime?.physicalTime))).map(item => ({
+      timestamp: item.sampleTime.physicalTime, full: numeric(item.fullSleepStats?.breathsPerMinute),
+      deep: numeric(item.deepSleepStats?.breathsPerMinute), light: numeric(item.lightSleepStats?.breathsPerMinute), rem: numeric(item.remSleepStats?.breathsPerMinute),
+    })),
+  }
 }
 
 function sleepStages(record: Json | null): SleepStage[] {
@@ -202,6 +243,9 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
   const rawHeartPoints = readIntraday(e.heartIntraday, 'activities-heart-intraday')
   const heartPoints = compactIntraday(rawHeartPoints)
   const sleepRecord = mainSleep(e.sleep)
+  const sessions = asArray(asObject(e.sleep).sleep).map((record, index) => normalizeSleepSession(record, index, payload.source === 'google-health'))
+  const mainSession = sleepRecord ? sessions[asArray(asObject(e.sleep).sleep).indexOf(sleepRecord)] : null
+  if (mainSession) mainSession.isMainSleep = true
   const sleepGoal = asObject(asObject(e.sleepGoal).goal)
   const latestWeight = asArray(asObject(e.bodyWeight).weight).at(-1) ?? null
   const latestFat = asArray(asObject(e.bodyFat).fat).at(-1) ?? null
@@ -240,7 +284,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
   const sleepTrendRecords = asArray(asObject(e.sleepTrend).sleep)
   const sleepTrend = new Map(sleepTrendRecords.filter((item) => item.isMainSleep !== false).map((item) => [
     String(item.dateOfSleep),
-    { minutes: numeric(item.minutesAsleep), score: numeric(item.sleepScore), efficiency: numeric(item.efficiency), timeInBed: numeric(item.timeInBed) },
+    { minutes: numeric(item.minutesAsleep), score: numeric(item.sleepScore), efficiency: numeric(item.efficiency), timeInBed: numeric(item.timeInBed), startTime: item.startTime, endTime: item.endTime, timeline: item.sleepType === 'CLASSIC' || item.processed === false ? [] : sleepStageTimeline(item) },
   ]))
   const metricTrend = new Map(asArray(asObject(e.metricTrends).values).map((item) => [String(item.dateTime), item]))
   const weightTrendRecords = asArray(asObject(e.bodyWeight).weight)
@@ -260,6 +304,10 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       steps: stepsTrend.get(date) ?? null,
       calories: caloriesTrend.get(date) ?? null,
       distanceKm: numeric(metric.distanceKm),
+      activeCalories: numeric(metric.activeCalories),
+      lightActiveMinutes: numeric(metric.lightActiveMinutes),
+      moderateActiveMinutes: numeric(metric.moderateActiveMinutes),
+      vigorousActiveMinutes: numeric(metric.vigorousActiveMinutes),
       floors: numeric(metric.floors),
       activeMinutes: numeric(metric.activeMinutes),
       zoneMinutes: numeric(metric.zoneMinutes),
@@ -275,6 +323,9 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       sleepScore: sleepTrend.get(date)?.score ?? null,
       sleepEfficiency: sleepTrend.get(date)?.efficiency ?? numeric(metric.sleepEfficiency),
       sleepTimeInBed: sleepTrend.get(date)?.timeInBed ?? null,
+      sleepStartTime: sleepTrend.get(date)?.startTime ?? null,
+      sleepEndTime: sleepTrend.get(date)?.endTime ?? null,
+      sleepStageTimeline: sleepTrend.get(date)?.timeline,
       weight: weightTrend.get(date) ?? null,
       bodyFat: numeric(metric.bodyFat),
       waterMl: numeric(metric.waterMl),
@@ -316,6 +367,14 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       features: asArray<string>(device.features),
     } : null,
     activity: {
+      historyTrends: trends,
+      activeCalories: numeric(activity.activeCalories),
+      intensityIntervals: asArray(asObject(e.movementSignals).intensity).flatMap(item => {
+        const level = ({ LIGHTLY_ACTIVE: 'light', MODERATELY_ACTIVE: 'moderate', VERY_ACTIVE: 'vigorous', SEDENTARY: 'sedentary' } as const)[item.activityLevelType as 'LIGHTLY_ACTIVE']
+        return level && Date.parse(item.interval?.endTime) > Date.parse(item.interval?.startTime) ? [{ startTime: item.interval.startTime, endTime: item.interval.endTime, level }] : []
+      }),
+      distanceIntervals: asArray(asObject(e.movementSignals).distance).filter(item => Date.parse(item.interval?.endTime) > Date.parse(item.interval?.startTime) && (numeric(item.millimeters) ?? -1) >= 0).map(item => ({ startTime: item.interval.startTime, endTime: item.interval.endTime, value: Number(item.millimeters) / 1000000 })),
+      zoneIntervals: asArray(asObject(e.movementSignals).zones).filter(item => Date.parse(item.interval?.endTime) > Date.parse(item.interval?.startTime) && (numeric(item.activeZoneMinutes) ?? -1) >= 0).map(item => ({ startTime: item.interval.startTime, endTime: item.interval.endTime, value: Number(item.activeZoneMinutes) })),
       steps: numeric(activity?.steps) ?? (stepsIntraday.length
         ? stepsIntraday.reduce((sum, point) => sum + point.value, 0)
         : null),
@@ -344,7 +403,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       heartRateMax: heartValues.length ? Math.max(...heartValues) : null,
       heartRateSamples: asArray(asObject(asObject(e.heartIntraday)['activities-heart-intraday']).dataset).filter(point => typeof point.timestamp === 'string' && /(?:Z|[+-]\d{2}:\d{2})$/i.test(point.timestamp) && Number.isFinite(Date.parse(point.timestamp)) && numeric(point.value) !== null && Number(point.value) > 0).map(point => ({ timestamp: point.timestamp, value: Number(point.value) })),
       heartRateIntraday: heartPoints,
-      hrvMs: firstNumber(hrvValue.dailyRmssd, hrvValue.deepRmssd),
+      hrvMs: numeric(hrvValue.dailyRmssd),
       hrvDeepSleepRmssdMs: numeric(hrvValue.deepRmssd),
       hrvEntropy: numeric(hrvValue.entropy),
       nonRemHeartRate: numeric(hrvValue.nonRemHeartRate),
@@ -372,6 +431,10 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       irregularRhythmAlerts: irregularAvailable ? irregularAlerts : null,
     },
     sleep: {
+      historyTrends: trends,
+      sessions,
+      mainSessionId: mainSession?.id ?? null,
+      details: normalizeSleepDetails(e.sleepDetails),
       totalMinutes: numeric(sleepRecord?.minutesAsleep),
       goalMinutes: numeric(sleepGoal.minDuration),
       score: numeric(sleepRecord?.sleepScore),
@@ -379,10 +442,10 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       startTime: sleepRecord?.startTime ?? null,
       endTime: sleepRecord?.endTime ?? null,
       stages: sleepStages(sleepRecord),
-      stageTimeline,
+      stageTimeline: mainSession?.stageTimeline ?? stageTimeline,
       stageTransitions: sleepStageTransitions(sleepRecord, stageTimeline),
-      minutesToFallAsleep: numeric(sleepRecord?.minutesToFallAsleep),
-      minutesAfterWakeUp: numeric(sleepRecord?.minutesAfterWakeUp),
+      minutesToFallAsleep: mainSession?.minutesToFallAsleep ?? null,
+      minutesAfterWakeUp: mainSession?.minutesAfterWakeUp ?? null,
       timeInBed: numeric(sleepRecord?.timeInBed),
       minutesAwake: numeric(sleepRecord?.minutesAwake),
     },
@@ -395,7 +458,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
       waterGoalMl: numeric(waterGoal.goal),
       caloriesIn: numeric(foodSummary.calories),
     },
-    trends,
+    trends: trends.slice(-14),
     workoutCoverage: typeof e.activities?.coverage?.startDate === 'string' && typeof e.activities?.coverage?.endDate === 'string' ? e.activities.coverage : null,
     activities: parseActivities(e.activities, APP_TIME_ZONE),
     insights: buildInsights(activity, heartSummary, sleepRecord, goals),

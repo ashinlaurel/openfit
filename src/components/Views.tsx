@@ -42,10 +42,7 @@ import {
   relativeTime,
 } from '@/lib/format'
 import { availableMetricCount, hasActivityData, hasBodyData, hasHealthData, hasSleepData } from '@/lib/data-availability'
-import { WorkdayMovement } from './WorkdayMovement'
-import { WeeklySleep } from './WeeklySleep'
-import { SleepScoreDetails } from './SleepScoreDetails'
-import { calculateSleepScore, sleepScoreForTrend } from '@/lib/sleep-score'
+import { calculateSleepScore } from '@/lib/sleep-score'
 import { ResearchInsights } from './ResearchInsights'
 import { analyzeHome } from '@/lib/home-analysis'
 import type { BaselineComparison } from '@/lib/home-analysis'
@@ -544,86 +541,7 @@ export function TodayView({ data, navigate }: ViewProps) {
   )
 }
 
-export function MovementView({ data }: ViewProps) {
-  const stepValues = data.trends.map((point) => point.steps)
-  const validSteps = stepValues.filter(hasValue)
-  const averageSteps = validSteps.length ? validSteps.reduce((sum, value) => sum + value, 0) / validSteps.length : null
-  const stepsByHour = hourlyBuckets(data.activity.stepsIntraday)
-  const supporting = [
-    hasValue(data.activity.floors) ? { label: 'Floors', value: formatNumber(data.activity.floors), icon: FloorsIcon } : null,
-    hasValue(data.activity.lightActiveMinutes) ? { label: 'Light activity', value: formatNumber(data.activity.lightActiveMinutes), unit: 'min', icon: ActivityIcon } : null,
-    hasValue(data.activity.moderateActiveMinutes) ? { label: 'Moderate activity', value: formatNumber(data.activity.moderateActiveMinutes), unit: 'min', icon: ActiveIcon } : null,
-    hasValue(data.activity.vigorousActiveMinutes) ? { label: 'Vigorous activity', value: formatNumber(data.activity.vigorousActiveMinutes), unit: 'min', icon: CaloriesIcon } : null,
-    hasValue(data.activity.zoneMinutes) ? { label: 'Zone minutes', value: formatNumber(data.activity.zoneMinutes), unit: 'min', icon: GaugeIcon } : null,
-    hasValue(data.activity.sedentaryMinutes) ? { label: 'Sedentary time', value: formatNumber(data.activity.sedentaryMinutes), unit: 'min', icon: DurationIcon } : null,
-  ].filter((item): item is SupportingMetric => item !== null)
-  const activityTrendValues = [
-    data.trends.map((point) => point.calories),
-    data.trends.map((point) => point.distanceKm),
-    data.trends.map((point) => point.activeMinutes),
-    data.trends.map((point) => point.zoneMinutes),
-    data.trends.map((point) => point.sedentaryMinutes),
-    data.trends.map((point) => point.floors),
-  ]
-  const hasActivityTrends = activityTrendValues.some((values) => values.filter(hasValue).length > 1)
-
-  return (
-    <div className="page-stack movement-page">
-      <div className="metric-grid activity-primary-metrics">
-        <MetricTile label="Steps" value={data.activity.steps} goal={data.activity.stepsGoal} icon={StepsIcon} />
-        <MetricTile label="Active minutes" value={data.activity.activeMinutes} goal={data.activity.activeMinutesGoal} unit=" min" icon={ActiveIcon} />
-        <MetricTile label="Distance" value={data.activity.distanceKm} goal={data.activity.distanceGoalKm} unit=" km" icon={DistanceIcon} decimals={1} />
-        <MetricTile label="Calories" value={data.activity.calories} goal={data.activity.caloriesGoal} unit=" kcal" icon={CaloriesIcon} />
-      </div>
-      <SupportingMetrics items={supporting} />
-      <WorkdayMovement data={data} />
-      <ResearchInsights data={data} kind="activity" />
-
-      <div className="chart-grid activity-chart-grid">
-        {data.activity.stepsIntraday.length > 0 && (
-          <Panel className="chart-panel" category="activity">
-            <PanelHeader eyebrow="Day" title="Steps per hour" icon={ActivityIcon} />
-            <ColumnChart
-              values={stepsByHour.values}
-              labels={stepsByHour.labels}
-              xValues={stepsByHour.xValues}
-              height={226}
-              ariaLabel="Steps aggregated by hour"
-            />
-          </Panel>
-        )}
-
-        {validSteps.length > 1 && (
-          <Panel className="chart-panel" category="activity">
-            <PanelHeader
-              eyebrow={`${validSteps.length} days with data`}
-              title="Daily steps"
-              icon={TrendIcon}
-              action={averageSteps !== null ? <Badge variant="secondary">Average {formatNumber(averageSteps)}</Badge> : null}
-            />
-            <ColumnChart values={stepValues} labels={trendLabels(data)} xValues={trendXValues(data)} target={data.activity.stepsGoal} height={226} ariaLabel="Total steps per day" />
-          </Panel>
-        )}
-      </div>
-
-      {hasActivityTrends && (
-        <section>
-          <SectionTitle title="Movement trends" copy="Daily series returned by Google Health." />
-          <div className="metric-trend-grid">
-            <MetricTrendPanel data={data} category="activity" icon={CaloriesIcon} title="Calories burned" values={data.trends.map((point) => point.calories)} formatter={(value) => `${formatNumber(value)} kcal`} />
-            <MetricTrendPanel data={data} category="activity" icon={DistanceIcon} title="Distance" values={data.trends.map((point) => point.distanceKm)} formatter={(value) => `${formatDecimal(value)} km`} />
-            <MetricTrendPanel data={data} category="activity" icon={ActiveIcon} title="Active minutes" values={data.trends.map((point) => point.activeMinutes)} formatter={(value) => `${formatNumber(value)} min`} />
-            <MetricTrendPanel data={data} category="activity" icon={GaugeIcon} title="Zone minutes" values={data.trends.map((point) => point.zoneMinutes)} formatter={(value) => `${formatNumber(value)} min`} />
-            <MetricTrendPanel data={data} category="activity" icon={DurationIcon} title="Sedentary time" values={data.trends.map((point) => point.sedentaryMinutes)} formatter={(value) => formatMinutes(value)} />
-            <MetricTrendPanel data={data} category="activity" icon={FloorsIcon} title="Floors" values={data.trends.map((point) => point.floors)} formatter={(value) => formatNumber(value)} />
-          </div>
-        </section>
-      )}
-
-      {!hasActivityData(data) && <EmptyValue>No movement data available for this day.</EmptyValue>}
-    </div>
-  )
-}
+export { MovementView } from './MovementPage'
 
 export { ActivityView } from './ActivityView'
 
@@ -664,6 +582,7 @@ export function HealthView({ data }: ViewProps) {
           </div>
           {heartValues.length > 0 && (
             <LineChart
+              scrollable
               values={heartValues}
               labels={heartLabels}
               xValues={timeXValues(heartLabels)}
@@ -727,67 +646,7 @@ export function HealthView({ data }: ViewProps) {
   )
 }
 
-export function SleepView({ data }: ViewProps) {
-  const openfitScore = calculateSleepScore(data.sleep)
-  const weekStart = new Date(Date.parse(`${data.selectedDate}T12:00:00Z`) - 6 * 86400000).toISOString().slice(0, 10)
-  const sleepTrendData = { ...data, trends: data.trends.filter(point => point.date >= weekStart && point.date <= data.selectedDate) }
-  const sleepValues = sleepTrendData.trends.map((point) => point.sleepMinutes)
-  const scoreValues = sleepTrendData.trends.map(point => point.date === data.selectedDate ? openfitScore.value : sleepScoreForTrend(point))
-  const efficiencyValues = sleepTrendData.trends.map((point) => point.sleepEfficiency)
-  const stageTimeline = data.sleep.stageTimeline ?? []
-  const stageTransitions = data.sleep.stageTransitions
-  const hasSummary = hasValue(data.sleep.totalMinutes) || hasValue(data.sleep.score) || hasValue(data.sleep.efficiency)
-  return (
-    <div className="page-stack sleep-page">
-      {hasSummary && <Panel className="sleep-main-card sleep-key-metrics" tone="violet" category="sleep">
-        <PanelHeader eyebrow="Last night" title="Sleep at a glance" icon={SleepIcon} />
-        <div className="sleep-key-grid">
-          <div className="sleep-key-primary"><span>Duration</span><strong>{compactMinutes(data.sleep.totalMinutes)}</strong>{hasValue(data.sleep.goalMinutes) && <small>Goal {compactMinutes(data.sleep.goalMinutes)}</small>}</div>
-          <div><span>OpenFit sleep score</span><strong>{openfitScore.value === null ? '—' : <>{openfitScore.value} <small>/ 100</small></>}</strong><small>{openfitScore.value === null ? openfitScore.reason : 'Experimental estimate · v1'}</small></div>
-          <div><span>Efficiency</span><strong>{hasValue(data.sleep.efficiency) ? `${formatNumber(data.sleep.efficiency)}%` : '—'}</strong>{hasValue(data.sleep.timeInBed) && <small>of {compactMinutes(data.sleep.timeInBed)} in bed</small>}</div>
-          <div><span>Bedtime</span><strong>{formatTime(data.sleep.startTime)}</strong><small>Wake {formatTime(data.sleep.endTime)}</small></div>
-        </div>
-        <div className="sleep-key-secondary">
-          {hasValue(data.sleep.score) && <TinyStat label="Provider sleep score" value={`${formatNumber(data.sleep.score)} · ${sleepScoreCategory(data.sleep.score)}`} />}
-          {hasValue(data.sleep.minutesToFallAsleep) && <TinyStat label="To fall asleep" value={formatMinutes(data.sleep.minutesToFallAsleep)} />}
-          {hasValue(data.sleep.minutesAwake) && <TinyStat label="Awake" value={formatMinutes(data.sleep.minutesAwake)} />}
-          {hasValue(data.sleep.minutesAfterWakeUp) && <TinyStat label="After waking" value={formatMinutes(data.sleep.minutesAfterWakeUp)} />}
-        </div>
-        <SleepScoreDetails sleep={data.sleep} />
-      </Panel>}
-
-      {stageTimeline.length > 0 && (
-        <Panel className="sleep-timeline-card" category="sleep">
-          <PanelHeader eyebrow={`${stageTimeline.length} segments detected`} title="Night timeline" icon={TrendIcon} />
-          <SleepStageTimeline segments={stageTimeline} />
-          {data.sleep.stages.some(stage => stage.minutes > 0) && <div className="sleep-stage-breakdown"><span>Stages</span><SleepStageBar stages={data.sleep.stages} /></div>}
-          <div className="sleep-detail-stats">
-            {hasValue(data.sleep.timeInBed) && <TinyStat label="Time in bed" value={formatMinutes(data.sleep.timeInBed)} />}
-            {hasValue(data.sleep.minutesAwake) && <TinyStat label="Time awake" value={formatMinutes(data.sleep.minutesAwake)} />}
-            {hasValue(data.sleep.minutesToFallAsleep) && <TinyStat label="Time to fall asleep" value={formatMinutes(data.sleep.minutesToFallAsleep)} />}
-            {hasValue(data.sleep.minutesAfterWakeUp) && <TinyStat label="After waking" value={formatMinutes(data.sleep.minutesAfterWakeUp)} />}
-            {hasValue(stageTransitions?.wake) && <TinyStat label="Awake episodes" value={formatNumber(stageTransitions.wake)} />}
-          </div>
-        </Panel>
-      )}
-
-      {(sleepValues.filter(hasValue).length > 1 || scoreValues.filter(hasValue).length > 1 || efficiencyValues.filter(hasValue).length > 1) && <section className="sleep-week-trends">
-        <SectionTitle title="This week" copy="Compare the last seven nights." />
-        <div className="sleep-week-trend-grid">
-          <MetricTrendPanel data={sleepTrendData} category="sleep" icon={SleepIcon} title="Duration" values={sleepValues} formatter={compactMinutes} target={data.sleep.goalMinutes} />
-          <MetricTrendPanel data={sleepTrendData} category="sleep" icon={GaugeIcon} title="Efficiency" values={efficiencyValues} formatter={(value) => `${formatNumber(value)}%`} target={90} />
-          <MetricTrendPanel data={sleepTrendData} category="sleep" icon={SignalIcon} title="OpenFit score · estimate" values={scoreValues} formatter={(value) => `${formatNumber(value)} / 100`} target={null} />
-        </div>
-      </section>}
-
-      <WeeklySleep data={data} />
-
-      <ResearchInsights data={data} kind="sleep" />
-
-      {!hasSleepData(data) && <EmptyValue>No sleep data available for this day.</EmptyValue>}
-    </div>
-  )
-}
+export { SleepView } from './SleepPage'
 
 function BodyMetric({ label, value, unit, icon: Icon, note }: { label: string; value: string; unit?: string; icon: AppIcon; note: string }) {
   return (
@@ -962,7 +821,7 @@ export function DevicesView({ data, status }: ViewProps) {
         </Panel>
       </div>
 
-      {data.sync.errors.length > 0 && <div className="sync-note"><InfoIcon aria-hidden="true" /><p>{data.sync.errors.length} sources returned no data for the selected period. Available measurements remain visible.</p></div>}
+      {data.sync.errors.length > 0 && <div className="sync-note"><InfoIcon aria-hidden="true" /><div><p>{data.sync.errors.length} sources unavailable</p><ul>{data.sync.errors.map(error => <li key={error.key}><strong>{error.key}</strong> · {error.message}</li>)}</ul></div></div>}
     </div>
   )
 }

@@ -79,12 +79,12 @@ import {
 type NavCategory = 'utility' | 'summary' | 'activity' | 'heart' | 'sleep' | 'body' | 'device'
 
 const navItems: Array<{ id: PageId; label: string; copy: string; icon: AppIcon; category: NavCategory }> = [
-  { id: 'today', label: 'Today', copy: 'The day’s essential overview.', icon: TodayIcon, category: 'summary' },
+  { id: 'today', label: 'Home', copy: 'The day’s essential overview.', icon: TodayIcon, category: 'summary' },
   { id: 'movement', label: 'Movement', copy: 'Steps, daily movement, and your workday rhythm.', icon: StepsIcon, category: 'activity' },
   { id: 'activity', label: 'Activity', copy: 'Workout sessions, training time, and exercise details.', icon: ActivityIcon, category: 'activity' },
   { id: 'gym', label: 'Gym', copy: 'Strength workouts synced from Open Gym.', icon: Dumbbell, category: 'activity' },
   { id: 'health', label: 'Health', copy: 'Cardiac and physiological signals over time.', icon: HeartIcon, category: 'heart' },
-  { id: 'sleep', label: 'Sleep', copy: 'Duration, quality, and composition of your latest night’s sleep.', icon: SleepIcon, category: 'sleep' },
+  { id: 'sleep', label: 'Sleep', copy: 'Sleep sessions, overnight signals, and your recent sleep schedule.', icon: SleepIcon, category: 'sleep' },
   { id: 'body', label: 'Body', copy: 'Weight, composition, and daily balance.', icon: BodyIcon, category: 'body' },
   { id: 'drinking', label: 'Drinking', copy: 'Your drinking pattern, alcohol-free days, and reduction goals.', icon: Wine, category: 'body' },
   { id: 'habits', label: 'Habits', copy: 'Small steps. A rhythm that feels like yours.', icon: Flame, category: 'utility' },
@@ -185,13 +185,14 @@ export default function App() {
   }, [selectedDate])
 
   const showCachedDate = useCallback(async (date: string, fallbackToLatest = false) => {
-    if (!window.fitbit) return
+    if (!window.fitbit) return false
     const version = ++cacheReadVersion.current
     let payload = await window.fitbit.getCachedData(date)
     if (!payload && fallbackToLatest) payload = await window.fitbit.getCachedData()
     // A late disk read must not replace a newer selection or completed refresh.
-    if (!payload || version !== cacheReadVersion.current || selectedDateRef.current !== date) return
+    if (!payload || version !== cacheReadVersion.current || selectedDateRef.current !== date) return false
     setData({ ...normalizeFitbitData(payload), source: 'cache' })
+    return payload.date === date
   }, [])
 
   const startupLoaded = useRef(false)
@@ -343,6 +344,7 @@ export default function App() {
   const changeDate = (date: string) => {
     if (!date || date > localIso()) return
     selectedDateRef.current = date
+    queuedDateRef.current = null
     setSelectedDate(date)
     if (data.source === 'demo' && !status.connected) {
       const demoData = createDemoData(date)
@@ -351,8 +353,8 @@ export default function App() {
       return
     }
     if (window.fitbit) {
-      void showCachedDate(date).catch(() => undefined).finally(() => {
-        if (status.connected && selectedDateRef.current === date) void runSync(date)
+      void showCachedDate(date).catch(() => false).then(cacheHit => {
+        if (!cacheHit && status.connected && selectedDateRef.current === date) void runSync(date)
       })
     }
   }

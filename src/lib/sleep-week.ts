@@ -9,7 +9,7 @@ export interface SleepWeekNight {
   elapsed: number | null
 }
 
-export function sleepWeek(days: DashboardData[], endDate: string, timezone: string) {
+export function sleepWeek(days: DashboardData[], endDate: string, timezone: string, dayCount = 7) {
   const records = new Map(days.map(day => [day.selectedDate, day]))
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
   const wallFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
@@ -21,13 +21,13 @@ export function sleepWeek(days: DashboardData[], endDate: string, timezone: stri
     const dayOffset = (Date.parse(`${stamp}T12:00:00Z`) - Date.parse(`${date}T12:00:00Z`)) / 86400000
     return dayOffset * 1440 + Number(part('hour')) * 60 + Number(part('minute'))
   }
-  const nights: SleepWeekNight[] = Array.from({ length: 7 }, (_, index) => {
-    const date = offsetDate(endDate, index - 6)
+  const nights: SleepWeekNight[] = Array.from({ length: dayCount }, (_, index) => {
+    const date = offsetDate(endDate, index - dayCount + 1)
     const day = records.get(date)
-    const fallback = days.flatMap(d => d.trends).find(p => p.date === date)?.sleepMinutes
-    const duration = day?.sleep.totalMinutes ?? fallback ?? null
+    const fallback = days.flatMap(d => d.trends).find(p => p.date === date)
+    const duration = day ? day.sleep.totalMinutes : fallback?.sleepMinutes ?? null
     const asleep = duration !== null && Number.isFinite(duration) && duration >= 0 && duration <= 1440 ? duration : null
-    const rawStart = day?.sleep.startTime ?? '', rawEnd = day?.sleep.endTime ?? ''
+    const rawStart = (day ? day.sleep.startTime : fallback?.sleepStartTime) ?? '', rawEnd = (day ? day.sleep.endTime : fallback?.sleepEndTime) ?? ''
     const wallStart = isWallTime(rawStart), wallEnd = isWallTime(rawEnd)
     // Offset-free provider timestamps already represent local wall time. Do not shift them through the device timezone.
     const startTime = Date.parse(rawStart + (wallStart ? 'Z' : '')), endTime = Date.parse(rawEnd + (wallEnd ? 'Z' : ''))

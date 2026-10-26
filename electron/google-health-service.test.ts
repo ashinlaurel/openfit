@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { __test } = require('./google-health-service.cjs') as {
@@ -199,4 +199,98 @@ describe('Air workout detail translation',()=>{
     expect(result.activities.activities[1]).toMatchObject({activeDurationMinutes:null,elapsedDurationMinutes:null,calories:null,runVo2Max:null,heartZoneMinutes:null,splits:[],events:[]})
     expect(__test.translateGoogleHealth({},'2026-06-22').activities.coverage).toBeNull()
   })
+})
+
+it('preserves naps, provider main-sleep flags, processing metadata and out-of-bed intervals', () => {
+  const sleep = (name: string, metadata: Record<string, unknown>, minutes: number | null) => ({
+    name, sleep: { metadata, type: 'STAGES',
+      interval: { civilEndTime: civil('2026-10-25'), startTime: '2026-10-24T18:00:00Z', endTime: '2026-10-25T02:00:00Z' },
+      summary: { minutesAsleep: minutes, minutesInSleepPeriod: 480, minutesToFallAsleep: 0, minutesAfterWakeUp: 0 },
+      outOfBedSegments: [{ startTime: '2026-10-24T22:00:00Z', endTime: '2026-10-24T22:05:00Z' }],
+    },
+  })
+  const endpoints = __test.translateGoogleHealth({ sleepRaw: { dataPoints: [
+    sleep('nap', { nap: true, mainSleep: false, processed: true, stagesStatus: 'REJECTED_NAP' }, 30),
+    sleep('main', { nap: false, mainSleep: true, processed: false, stagesStatus: 'REJECTED_COVERAGE' }, 420),
+    sleep('other', { mainSleep: false, manuallyEdited: true }, null),
+  ] } }, '2026-10-25')
+  expect(endpoints.sleep.sleep).toHaveLength(3)
+  expect(endpoints.sleep.sleep[0]).toMatchObject({ isNap: true, isMainSleep: false, minutesToFallAsleep: null })
+  expect(endpoints.sleep.sleep[1]).toMatchObject({ logId: 'main', isMainSleep: true, processed: false, stagesStatus: 'REJECTED_COVERAGE', outOfBedSegments: [{ startTime: '2026-10-24T22:00:00Z', endTime: '2026-10-24T22:05:00Z' }] })
+  expect(endpoints.sleep.sleep[2]).toMatchObject({ minutesAsleep: null, efficiency: null, minutesToFallAsleep: 0 })
+  expect(endpoints.sleepTrend.sleep.filter((s: any) => s.isMainSleep)).toHaveLength(1)
+})
+
+it('does not relabel deep-sleep HRV as an overnight average', () => {
+  const endpoints = __test.translateGoogleHealth({ hrvRaw: { dataPoints: [{ dailyHeartRateVariability: { date: { year: 2026, month: 10, day: 25 }, deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds: 50 } }] } }, '2026-10-25')
+  expect(endpoints.hrv.hrv[0].value).toMatchObject({ dailyRmssd: null, deepRmssd: 50 })
+})
+
+
+it('fetches detailed sleep sources across midnight and tolerates an unavailable optional source', async () => {
+  const service = require('./google-health-service.cjs')
+  vi.useFakeTimers()
+  const urls: URL[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const url = new URL(input); urls.push(url)
+    if (url.pathname.includes('/dataTypes/sleep/')) {
+      const dataPoints = url.searchParams.get('dataSourceFamily') === 'users/me/dataSourceFamilies/google-sources'
+        ? [
+          { dataPointName: 'edited-night', sleep: { interval: { civilEndTime: civil('2026-10-25') }, metadata: { mainSleep: true, manuallyEdited: true }, summary: { minutesAsleep: '360' } } },
+          { dataPointName: 'edited-nap', sleep: { interval: { civilEndTime: civil('2026-10-25') }, metadata: { nap: true, manuallyEdited: true }, summary: { minutesAsleep: '45' } } },
+        ] : []
+      return new Response(JSON.stringify({ dataPoints }), { status: 200 })
+    }
+    return new Response(JSON.stringify(url.pathname.includes('/dataTypes/oxygen-saturation/') ? { error: { message: 'Not available' } } : {}), { status: url.pathname.includes('/dataTypes/oxygen-saturation/') ? 403 : 200 })
+  }))
+  try {
+    const pending = service.syncData('test-token', '2026-10-25')
+    await vi.runAllTimersAsync()
+    const result = await pending
+    for (const type of ['heart-rate-variability', 'oxygen-saturation', 'respiratory-rate-sleep-summary']) {
+      const url = urls.find(url => url.pathname.includes(`/dataTypes/${type}/`))!
+      expect(url.searchParams.get('filter')).toContain('2026-10-24')
+      expect(url.searchParams.get('filter')).toContain('2026-10-26')
+    }
+    expect(result.errors).toContainEqual(expect.objectContaining({ key: 'sleepSpo2Raw', status: 403 }))
+    expect(result.endpoints.sleepDetails.spo2).toEqual([])
+    const sleep = urls.find(url => url.pathname.includes('/dataTypes/sleep/'))!
+    expect(sleep.searchParams.get('filter')).toContain('2026-09-26')
+    expect(sleep.searchParams.get('dataSourceFamily')).toBe('users/me/dataSourceFamilies/google-sources')
+    expect(result.endpoints.sleep.sleep).toMatchObject([
+      { logId: 'edited-night', isMainSleep: true, manuallyEdited: true, minutesAsleep: 360 },
+      { logId: 'edited-nap', isMainSleep: false, isNap: true, minutesAsleep: 45 },
+    ])
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals() }
+})
+
+it('splits restricted 30-day rollups into nonoverlapping 14-day requests and follows pages', async () => {
+  const service = require('./google-health-service.cjs')
+  vi.useFakeTimers()
+  const ranges: Array<{ start: string; end: string }> = []
+  const stamp = (date: any) => `${date.year}-${String(date.month).padStart(2,'0')}-${String(date.day).padStart(2,'0')}`
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, options: any) => {
+    const body = JSON.parse(options.body), start = stamp(body.range.start.date), end = stamp(body.range.end.date)
+    if (body.pageToken) return new Response(JSON.stringify({rollupDataPoints:[{id:'next-page'}]}))
+    ranges.push({ start, end })
+    return new Response(JSON.stringify({rollupDataPoints:[{id:start}],nextPageToken:'more'}))
+  }))
+  try {
+    const pending = service.__test.dailyRollup('test-token','active-minutes','2026-09-26','2026-10-26')
+    await vi.runAllTimersAsync()
+    const result = await pending
+    expect(ranges).toEqual([{start:'2026-09-26',end:'2026-10-09'},{start:'2026-10-10',end:'2026-10-23'},{start:'2026-10-24',end:'2026-10-25'}])
+    expect(result.rollupDataPoints).toHaveLength(6)
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals() }
+})
+
+it('preserves movement energy, timestamped intensity and missing intensity categories', () => {
+  const result = __test.translateGoogleHealth({
+    activeEnergyDaily:{rollupDataPoints:[daily('2026-10-25',{activeEnergyBurned:{kcalSum:321}})]},
+    activeMinutesDaily:{rollupDataPoints:[daily('2026-10-25',{activeMinutes:{activeMinutesRollupByActivityLevel:[{activityLevel:'MODERATE',activeMinutesSum:'12'}]}})]},
+    movementIntensityRaw:{dataPoints:[{activityLevel:{interval:{startTime:'2026-10-25T08:00:00Z',endTime:'2026-10-25T08:05:00Z'},activityLevelType:'VERY_ACTIVE'}}]},
+  },'2026-10-25')
+  expect(result.activity.summary).toMatchObject({activeCalories:321,lightlyActiveMinutes:null,fairlyActiveMinutes:12,veryActiveMinutes:null})
+  expect(result.movementSignals.intensity[0].activityLevelType).toBe('VERY_ACTIVE')
+  expect(result.metricTrends.values.find((p:any)=>p.dateTime==='2026-10-25')).toMatchObject({activeCalories:321,moderateActiveMinutes:12,vigorousActiveMinutes:null})
 })

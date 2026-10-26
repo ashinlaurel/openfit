@@ -5,6 +5,7 @@ import { sleepClock, sleepWeek } from './sleep-week'
 describe('weekly sleep timing', () => {
   it('aligns overnight bars around midnight and returns exactly seven calendar dates', () => {
     const day = createDemoData('2026-10-19')
+    day.trends = []
     day.sleep.startTime = '2026-10-18T23:30:00Z'
     day.sleep.endTime = '2026-10-19T07:00:00Z'
     day.sleep.totalMinutes = 420
@@ -18,6 +19,7 @@ describe('weekly sleep timing', () => {
   })
   it('keeps offset-free wall times unchanged even when profile and device timezones differ', () => {
     const day = createDemoData('2026-10-19')
+    day.trends = []
     day.sleep.startTime = '2026-10-18T23:42:00'
     day.sleep.endTime = '2026-10-19T06:55:00'
     expect(sleepWeek([day], day.selectedDate, 'Europe/Rome').nights[6]).toMatchObject({ start: -18, end: 415 })
@@ -31,6 +33,7 @@ describe('weekly sleep timing', () => {
   })
   it('does not invent timing from duration and expands the domain for daytime sleep', () => {
     const day = createDemoData('2026-10-19')
+    day.trends = []
     day.sleep.startTime = null
     day.sleep.endTime = null
     day.sleep.totalMinutes = 0
@@ -43,4 +46,15 @@ describe('weekly sleep timing', () => {
     expect(sleepClock(-60)).toBe('11:00 PM')
     expect(sleepClock(1440)).toBe('12:00 AM')
   })
+})
+
+it('uses explicit trend timing for 30 days without fabricating timing for missing nights', () => {
+  const day = createDemoData('2026-10-25')
+  day.trends = day.sleep.historyTrends!
+  const result = sleepWeek([day], day.selectedDate, 'Asia/Kolkata', 30)
+  expect(result.nights).toHaveLength(30)
+  expect(result.timedCount).toBe(30)
+  expect(result.nights.at(-2)?.asleep).toBe(createDemoData('2026-10-24').sleep.totalMinutes)
+  day.trends = day.trends.map(p => p.date === '2026-10-24' ? { ...p, sleepStartTime: null, sleepEndTime: null } : p)
+  expect(sleepWeek([day], day.selectedDate, 'Asia/Kolkata', 30).nights.at(-2)?.start).toBeNull()
 })

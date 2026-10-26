@@ -1,21 +1,24 @@
-import type { SleepStage, TrendPoint } from '@/types'
+import { analyzeSleepTimeline } from './sleep-timeline'
+import type { SleepStage, SleepStageSegment, TrendPoint } from '@/types'
 
 // Research informs the dimensions; these weights and curves are OpenFit design
 // choices, not coefficients from a validated clinical instrument. See docs/SLEEP_SCORE.md.
-export const SLEEP_SCORE_VERSION = 'openfit-sleep-v1'
+export const SLEEP_SCORE_VERSION = 'openfit-sleep-v4'
 export const SLEEP_SCORE_SOURCES = [
   { label: 'Watson et al., 2015 · adult sleep duration', url: 'https://pubmed.ncbi.nlm.nih.gov/26039963/' },
-  { label: 'Ohayon et al., 2017 · sleep continuity', url: 'https://pubmed.ncbi.nlm.nih.gov/28346153/' },
+  { label: 'Ohayon et al., 2017 · awakenings and stages', url: 'https://doi.org/10.1016/j.sleh.2016.11.006' },
   { label: 'Chinoy et al., 2021 · wearable accuracy', url: 'https://pubmed.ncbi.nlm.nih.gov/33378539/' },
 ] as const
 
-export const DURATION_CURVE = [[0, 0], [240, 25], [360, 60], [420, 85], [480, 100]] as const
-export const CONTINUITY_CURVE = [[0, 0], [50, 0], [75, 60], [85, 90], [95, 100], [100, 100]] as const
+export const DURATION_CURVE = [[0, 0], [240, 25], [360, 60], [420, 75], [480, 100]] as const
 
 type Input = {
   totalMinutes: number | null
+  processed?: boolean | null
+  // Accepted for compatibility with sleep records; neither field affects scoring.
   timeInBed?: number | null
   efficiency?: number | null
+  stageTimeline?: SleepStageSegment[]
   stages?: Array<Pick<SleepStage, 'key' | 'minutes'>>
 }
 
@@ -30,38 +33,38 @@ function interpolate(value: number, curve: ReadonlyArray<readonly [number, numbe
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
 export function calculateSleepScore(input: Input) {
-  const minutes = input.totalMinutes
-  let reason: string | null = null
-  let efficiency: number | null = null
-  let continuitySource: 'duration-ratio' | 'reported-efficiency' | null = null
-  if (!finite(minutes) || minutes <= 0 || minutes > 1440) {
-    reason = 'A valid sleep duration is needed.'
-  } else if (input.timeInBed !== null && input.timeInBed !== undefined) {
-    if (!finite(input.timeInBed) || input.timeInBed < minutes || input.timeInBed > 1440) reason = 'Sleep duration and time in bed are inconsistent.'
-    else { efficiency = minutes / input.timeInBed * 100; continuitySource = 'duration-ratio' }
-  } else if (finite(input.efficiency) && input.efficiency > 0 && input.efficiency <= 100) {
-    efficiency = input.efficiency; continuitySource = 'reported-efficiency'
-  } else reason = 'Time in bed or a valid efficiency reading is needed.'
-
-  const stageRows = (['light', 'deep', 'rem'] as const).map(key => ({ key, rows: input.stages?.filter(stage => stage.key === key) ?? [] }))
-  const stageTotal = stageRows.reduce((sum, entry) => sum + (entry.rows[0]?.minutes ?? 0), 0)
-  const stagesUsable = finite(minutes) && minutes > 0 && stageTotal > 0
-    && stageRows.some(entry => entry.key !== 'light' && (entry.rows[0]?.minutes ?? 0) > 0)
-    && stageRows.every(entry => entry.rows.length === 1 && finite(entry.rows[0].minutes) && entry.rows[0].minutes >= 0)
-    && Math.abs(stageTotal - minutes) <= Math.max(5, minutes * 0.02)
-  const stageContext = stagesUsable ? stageRows.map(entry => ({ key: entry.key, minutes: entry.rows[0].minutes, percent: entry.rows[0].minutes / stageTotal * 100 })) : []
-
-  const components = reason === null && finite(minutes) && efficiency !== null ? [
-    { key: 'duration', label: 'Duration', weight: 60, score: interpolate(minutes, DURATION_CURVE), observed: minutes, unit: 'min' },
-    { key: 'continuity', label: 'Continuity', weight: 40, score: interpolate(efficiency, CONTINUITY_CURVE), observed: efficiency, unit: '%' },
+  const timeline = analyzeSleepTimeline(input.stageTimeline)
+  const minutes = timeline?.asleepMinutes ?? null
+  let reason: string | null = timeline ? null : 'A complete staged sleep timeline is needed.'
+  if (input.processed === false) reason = 'Google is still processing this sleep session.'
+  if (timeline && finite(input.totalMinutes) && Math.abs(input.totalMinutes - timeline.asleepMinutes) > Math.max(5, input.totalMinutes * 0.02)) {
+    reason = 'The timeline and recorded sleep duration disagree.'
+  }
+  const stageContext = timeline ? (['light', 'deep', 'rem'] as const).map(key => ({
+    key, minutes: timeline.totals[key], percent: timeline.totals[key] / timeline.asleepMinutes * 100,
+  })) : []
+  const durationScore = minutes === null ? 0 : interpolate(minutes, DURATION_CURVE)
+  // Research supplies indicators, not point deductions. These curves are
+  // conservative OpenFit engineering choices, documented in SLEEP_SCORE.md.
+  const awakePenalty = timeline ? interpolate(timeline.awakeMinutes, [[0, 0], [20, 0], [40, 10], [60, 20], [120, 40]]) : 0
+  const awakeningPenalty = timeline ? interpolate(timeline.sustainedAwakenings, [[0, 0], [1, 0], [2, 5], [3, 10], [4, 20], [6, 30]]) : 0
+  // Avoid adding two deductions for the same wakefulness.
+  const fragmentationPenalty = Math.max(awakePenalty, awakeningPenalty)
+  const deepPercent = stageContext.find(stage => stage.key === 'deep')?.percent ?? 0
+  const remPercent = stageContext.find(stage => stage.key === 'rem')?.percent ?? 0
+  // Adult indicators only; no claim that more deep/REM or less light is better.
+  const stagePenalty = timeline ? (deepPercent <= 5 ? 10 : 0) + (remPercent >= 41 ? 10 : 0) : 0
+  const timelinePenalty = fragmentationPenalty + stagePenalty
+  const components = reason === null && minutes !== null ? [
+    { key: 'duration', label: 'Duration base', weight: 100, score: durationScore, observed: minutes, unit: 'min' },
   ] : []
   return {
     version: SLEEP_SCORE_VERSION,
-    value: components.length ? Math.round(components.reduce((sum, component) => sum + component.score * component.weight / 100, 0)) : null,
-    reason, components, continuitySource, stageContext,
+    value: components.length ? Math.round(Math.max(0, durationScore - timelinePenalty)) : null,
+    reason, components, stageContext, timeline, timelinePenalty, fragmentationPenalty, stagePenalty,
   }
 }
 
 export function sleepScoreForTrend(point: TrendPoint) {
-  return calculateSleepScore({ totalMinutes: point.sleepMinutes, timeInBed: point.sleepTimeInBed, efficiency: point.sleepEfficiency }).value
+  return calculateSleepScore({ totalMinutes: point.sleepMinutes, stageTimeline: point.sleepStageTimeline }).value
 }

@@ -106,7 +106,7 @@ function compactDay(data: DashboardData) {
       totalMinutes: data.sleep.totalMinutes,
       goalMinutes: data.sleep.goalMinutes,
       score: data.sleep.score,
-      openfitSleepEstimate: { ...calculateSleepScore(data.sleep), validated: false, scope: 'Adult duration and continuity estimate; not the provider sleep score.' },
+      openfitSleepEstimate: { ...calculateSleepScore(data.sleep), validated: false, scope: 'Adult sleep timeline estimate using duration, sustained awakenings and stage indicators; efficiency is excluded. Not the provider sleep score.' },
       efficiencyPercent: data.sleep.efficiency,
       startTime: data.sleep.startTime,
       endTime: data.sleep.endTime,

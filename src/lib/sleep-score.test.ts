@@ -1,46 +1,66 @@
 import { describe, expect, it } from 'vitest'
-import { calculateSleepScore } from './sleep-score'
+import type { SleepStageSegment, TrendPoint } from '@/types'
+import { calculateSleepScore, sleepScoreForTrend } from './sleep-score'
+import { analyzeSleepTimeline } from './sleep-timeline'
 
-describe('OpenFit sleep score v1', () => {
-  it('explains the Oct 24 record independently of the provider score', () => {
-    const result = calculateSleepScore({ totalMinutes: 430, timeInBed: 444, stages: [{ key: 'light', minutes: 249 }, { key: 'deep', minutes: 77 }, { key: 'rem', minutes: 104 }] })
-    expect(result.value).toBe(93)
-    expect(result.continuitySource).toBe('duration-ratio')
+function timeline(parts: Array<[SleepStageSegment['type'], number]>) {
+  let time = Date.parse('2026-10-23T22:00:00Z')
+  return parts.map(([type, minutes]) => {
+    const startTime = new Date(time).toISOString()
+    time += minutes * 60000
+    return { type, startTime, endTime: new Date(time).toISOString() }
+  })
+}
+const night = (awake = 14) => timeline([['deep', 77], ['light', 120], ['wake', awake], ['light', 129], ['rem', 104]])
+
+describe('OpenFit timeline sleep estimate v4', () => {
+  it('reads duration and stages from the plotted timeline', () => {
+    const result = calculateSleepScore({ totalMinutes: 430, stageTimeline: night() })
+    expect(result.value).toBe(79)
     expect(result.stageContext.map(stage => stage.minutes)).toEqual([249, 77, 104])
-    expect(result.components.reduce((sum, part) => sum + part.weight, 0)).toBe(100)
+    expect(result.timeline?.awakeMinutes).toBe(14)
   })
-  it('never treats absent, zero or contradictory measurements as a good night', () => {
-    for (const input of [
-      { totalMinutes: null, timeInBed: 480 }, { totalMinutes: 0, timeInBed: 480 },
-      { totalMinutes: 420 }, { totalMinutes: 420, timeInBed: 400, efficiency: 95 },
-      { totalMinutes: NaN, efficiency: 90 }, { totalMinutes: 1500, timeInBed: 1600 },
-      { totalMinutes: 420, efficiency: 101 }, { totalMinutes: 420, timeInBed: Infinity },
-    ]) expect(calculateSleepScore(input).value).toBeNull()
+  it('scores the same sleep duration lower when the timeline contains more wakefulness', () => {
+    expect(calculateSleepScore({ totalMinutes: 430, stageTimeline: night(60) }).value).toBe(59)
+    const fragmented = timeline([['deep', 77], ['wake', 5], ['light', 80], ['wake', 5], ['light', 80], ['wake', 5], ['light', 89], ['wake', 5], ['rem', 104]])
+    expect(calculateSleepScore({ totalMinutes: 430, stageTimeline: fragmented }).value).toBe(59)
   })
-  it('keeps missing stages from changing a complete duration/continuity score', () => {
-    const input = { totalMinutes: 420, timeInBed: 450 }
-    const incomplete = calculateSleepScore({ ...input, stages: [{ key: 'light', minutes: 420 }] })
-    expect(incomplete.stageContext).toEqual([])
-    expect(incomplete.value).toBe(calculateSleepScore(input).value)
-    expect(calculateSleepScore({ totalMinutes: 1, timeInBed: 2, stages: [{ key: 'light', minutes: 0 }, { key: 'deep', minutes: 0 }, { key: 'rem', minutes: 0 }] }).stageContext).toEqual([])
+  it('merges consecutive wake rows and excludes leading/trailing wakefulness', () => {
+    const result = analyzeSleepTimeline(timeline([['wake', 30], ['deep', 77], ['wake', 3], ['wake', 3], ['light', 249], ['rem', 104], ['wake', 30]]))!
+    expect(result.awakeMinutes).toBe(6)
+    expect(result.awakeEpisodes).toBe(1)
+    expect(result.sustainedAwakenings).toBe(1)
+    expect(result.longestSleepMinutes).toBe(353)
   })
-  it('does not reward short efficient nights over longer consolidated nights', () => {
-    expect(calculateSleepScore({ totalMinutes: 240, timeInBed: 240 }).value).toBe(55)
-    expect(calculateSleepScore({ totalMinutes: 420, timeInBed: 480 }).value).toBeGreaterThan(55)
-    expect(calculateSleepScore({ totalMinutes: 420, timeInBed: 600 }).value).toBeLessThan(calculateSleepScore({ totalMinutes: 420, timeInBed: 450 }).value!)
+  it('does not count transitions between sleeping stages as awakenings', () => {
+    const result = analyzeSleepTimeline(timeline([['deep', 77], ['light', 249], ['rem', 104]]))!
+    expect(result.sustainedAwakenings).toBe(0)
+    expect(result.longestSleepMinutes).toBe(430)
   })
-  it('uses reported efficiency only when time in bed is absent', () => {
-    expect(calculateSleepScore({ totalMinutes: 480, efficiency: 90 }).continuitySource).toBe('reported-efficiency')
-    expect(calculateSleepScore({ totalMinutes: 480, timeInBed: 600, efficiency: 100 }).value).toBe(90)
-  })
-  it('is bounded and monotonic, with no extra reward or automatic penalty after eight hours', () => {
-    let previous = 0
-    for (let minutes = 1; minutes <= 1440; minutes++) {
-      const score = calculateSleepScore({ totalMinutes: minutes, efficiency: 95 }).value!
-      expect(score).toBeGreaterThanOrEqual(previous)
-      expect(score).toBeLessThanOrEqual(100)
-      previous = score
+  it('rejects absent, unclassified, overlapping, gapped or inconsistent timelines', () => {
+    expect(calculateSleepScore({ totalMinutes: 430 }).value).toBeNull()
+    expect(calculateSleepScore({ totalMinutes: 430, stageTimeline: timeline([['light', 430]]) }).value).toBeNull()
+    expect(calculateSleepScore({ totalMinutes: 300, stageTimeline: night() }).value).toBeNull()
+    for (const offset of [-60000, 60000]) {
+      const rows = night()
+      rows[1].startTime = new Date(Date.parse(rows[1].startTime) + offset).toISOString()
+      expect(calculateSleepScore({ totalMinutes: 430, stageTimeline: rows }).value).toBeNull()
     }
-    expect(calculateSleepScore({ totalMinutes: 600, timeInBed: 600 }).value).toBe(100)
+    expect(analyzeSleepTimeline([{ type: 'deep', startTime: 'invalid', endTime: 'invalid' }])).toBeNull()
+  })
+  it('ignores efficiency, time in bed and summary stage percentages', () => {
+    const baseline = calculateSleepScore({ totalMinutes: 430, stageTimeline: night() })
+    for (const efficiency of [null, 0, 30, 100, 101, NaN]) {
+      expect(calculateSleepScore({ totalMinutes: 430, stageTimeline: night(), efficiency, timeInBed: Infinity, stages: [{ key: 'deep', minutes: 0 }] })).toEqual(baseline)
+    }
+  })
+  it('uses adult stage flags without rewarding more REM or penalizing light alone', () => {
+    const result = calculateSleepScore({ totalMinutes: 480, stageTimeline: timeline([['deep', 20], ['light', 220], ['rem', 240]]) })
+    expect(result.stagePenalty).toBe(20)
+    expect(result.value).toBe(80)
+  })
+  it('uses the same method for historical points and leaves missing timelines empty', () => {
+    expect(sleepScoreForTrend({ sleepMinutes: 430, sleepStageTimeline: night() } as TrendPoint)).toBe(79)
+    expect(sleepScoreForTrend({ sleepMinutes: 430 } as TrendPoint)).toBeNull()
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-const { cachedDay, latestDay, normalizeArchive, storeDay } = require('./health-cache.cjs')
+const { cachedDay, latestDay, normalizeArchive, storeDay, recentMissingDates } = require('./health-cache.cjs')
 
 const payload = (date: string) => ({ source: 'google-health', date, generatedAt: `${date}T12:00:00Z`, endpoints: {}, errors: [], rateLimit: {} })
 
@@ -15,6 +15,11 @@ describe('health history cache', () => {
     expect(cachedDay(archive, '2026-06-21')?.date).toBe('2026-06-21')
     expect(cachedDay(archive, '2026-06-22')?.date).toBe('2026-06-22')
     expect(latestDay(archive)?.date).toBe('2026-06-22')
+  })
+
+  it('never backfills a cached date, including older snapshots', () => {
+    const archive = storeDay(null, payload('2026-10-24'))
+    expect(recentMissingDates(archive, '2026-10-25', 2)).toEqual(['2026-10-25'])
   })
 
   it('replaces only the matching day', () => {

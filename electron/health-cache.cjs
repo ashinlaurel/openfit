@@ -60,7 +60,7 @@ function recentMissingDates(value, today, count = 7) {
     const date = new Date(today + 'T12:00:00Z')
     date.setUTCDate(date.getUTCDate() - index)
     return date.toISOString().slice(0, 10)
-  }).filter(date => !archive.days[date] || (archive.days[date].source === 'google-health' && archive.days[date].timeZoneVersion !== 1))
+  }).filter(date => !archive.days[date])
 }
 
 module.exports = { CACHE_VERSION, recentMissingDates, normalizeArchive, cachedDay, latestDay, storeDay }
