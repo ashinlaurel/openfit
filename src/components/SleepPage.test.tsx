@@ -29,6 +29,10 @@ describe('Sleep page', () => {
     expect(nap.getAttribute('aria-selected')).toBe('true')
     expect(host.querySelector('.sleep-timeline-interactive')).toBeNull()
     expect(host.textContent).toContain('Daily summaries describe the main sleep')
+    const napBar = host.querySelector<HTMLButtonElement>('.weekly-sleep-extra')!
+    expect(napBar.getAttribute('aria-label')).toContain('Nap')
+    await act(async () => napBar.click())
+    expect(host.querySelector('.weekly-sleep-night-detail')?.textContent).toContain('Nap:')
   })
   it('hides session tabs when there is only a main sleep', async () => {
     const data = createDemoData('2026-10-25')

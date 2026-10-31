@@ -291,3 +291,16 @@ it('normalizes all sleep sessions and validated timestamped overnight samples', 
   expect(data.health.hrvMs).toBeNull()
   expect(data.sleep.details).toMatchObject({ hrv: [{ timestamp: '2026-10-25T01:00:00Z', value: 35 }], spo2: [{ timestamp: '2026-10-25T01:00:00Z', value: 98 }], breathing: [{ full: 15, deep: 14, light: null, rem: null }] })
 })
+
+it('preserves body measurement dates, ignores future records, and calculates BMI only with height', () => {
+  const payload: RawFitbitPayload = { source: 'google-health', date: '2026-10-27', generatedAt: '2026-10-27T08:00:00Z', endpoints: {
+    profile: { user: { height: 180 } },
+    bodyWeight: { weight: [{ date: '2026-10-28', weight: 80 }, { date: '2026-10-27', weight: 90 }] },
+    bodyFat: { fat: [{ date: '2026-10-26', fat: 25 }] },
+  }, errors: [], rateLimit: { limit: null, remaining: null, resetSeconds: null } }
+  const body = normalizeFitbitData(payload).body
+  expect(body).toMatchObject({ weightKg: 90, weightDate: '2026-10-27', bodyFatDate: '2026-10-26', heightCm: 180, bmiCalculated: true })
+  expect(body.bmi).toBeCloseTo(27.7778)
+  payload.endpoints.profile = { user: {} }
+  expect(normalizeFitbitData(payload).body.bmi).toBeNull()
+})

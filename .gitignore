@@ -19,3 +19,12 @@ screenshots/
 
 # Generated local code knowledge graph
 graphify-out/
+
+# Android build output and local SDK/signing files
+android-sync/.gradle/
+android-sync/.kotlin/
+android-sync/**/build/
+android-sync/local.properties
+android-sync/*.jks
+android-sync/*.keystore
+/public/downloads/*.apk

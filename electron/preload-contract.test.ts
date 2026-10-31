@@ -50,7 +50,10 @@ describe('preload bridge contract', () => {
       'sync',
       'getCachedData',
       'getCachedArchive',
+      'getBodyHistory',
       'exportData',
+      'getExerciseRoute',
+      'exportExerciseRoute',
       'openExternal',
       'onAuthComplete',
       'onSyncProgress',
@@ -62,7 +65,10 @@ describe('preload bridge contract', () => {
     expect(fitbit?.disconnect()).toMatchObject({ channel: 'fitbit:disconnect' })
     expect(fitbit?.sync('2026-06-22')).toMatchObject({ channel: 'fitbit:sync', args: ['2026-06-22'] })
     expect(fitbit?.getCachedData()).toMatchObject({ channel: 'fitbit:get-cached-data' })
+    expect(fitbit?.getBodyHistory(true)).toMatchObject({ channel: 'fitbit:get-body-history', args: [true] })
     expect(fitbit?.getCachedArchive()).toMatchObject({ channel: 'fitbit:get-cached-archive' })
+    expect(fitbit?.getExerciseRoute('users/me/dataTypes/exercise/dataPoints/123', true)).toMatchObject({ channel: 'fitbit:get-exercise-route', args: ['users/me/dataTypes/exercise/dataPoints/123', true] })
+    expect(fitbit?.exportExerciseRoute('users/me/dataTypes/exercise/dataPoints/123')).toMatchObject({ channel: 'fitbit:export-exercise-route', args: ['users/me/dataTypes/exercise/dataPoints/123'] })
     expect(fitbit?.exportData()).toMatchObject({ channel: 'fitbit:export-data' })
     expect(fitbit?.openExternal('https://example.test')).toMatchObject({ channel: 'fitbit:open-external', args: ['https://example.test'] })
 
@@ -83,7 +89,7 @@ describe('preload bridge contract', () => {
     expect(handleSyncProgress).toHaveBeenCalledWith({ completed: 1, total: 2, key: 'steps' })
     unsubscribeSync()
     expect(removeListener).toHaveBeenCalledWith('fitbit:sync-progress', syncListener)
-    expect(invoke).toHaveBeenCalledTimes(9)
+    expect(invoke).toHaveBeenCalledTimes(12)
   })
 
   it('exposes the expected health assistant bridge methods and IPC channels', () => {

@@ -139,6 +139,32 @@ async function request(path, accessToken, { method = 'GET', body, retryCount = 0
   return payload
 }
 
+async function exportExerciseTcx(accessToken, name) {
+  if (typeof name !== 'string' || !/^users\/[a-zA-Z0-9_-]+\/dataTypes\/exercise\/dataPoints\/[a-zA-Z0-9_-]+$/.test(name)) throw new Error('Invalid exercise resource.')
+  await waitForApiSlot()
+  const response = await fetchWithTimeout(`${API_BASE}/${name}:exportExerciseTcx?alt=media`, {
+    headers: { authorization: `Bearer ${accessToken}`, accept: 'application/tcx+xml, application/xml' },
+  }, 30_000)
+  if (!response.ok) {
+    const message = response.status === 403 ? 'Reconnect Google Health and allow exercise location access.'
+      : response.status === 404 ? 'Google has not made this GPS route available yet.' : `Google could not load this route (${response.status}). Try again.`
+    throw new Error(message)
+  }
+  if (Number(response.headers.get('content-length')) > 8_000_000) throw new Error('This route exceeds the supported size.')
+  const reader = response.body.getReader()
+  const chunks = []; let size = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > 8_000_000) { await reader.cancel(); throw new Error('This route exceeds the supported size.') }
+    chunks.push(Buffer.from(value))
+  }
+  const tcx = Buffer.concat(chunks).toString('utf8')
+  if (!tcx.includes('TrainingCenterDatabase') || /<!DOCTYPE|<!ENTITY/i.test(tcx)) throw new Error('Google returned an invalid route file.')
+  return tcx
+}
+
 function shiftIso(value, days) {
   const [year, month, day] = value.split('-').map(Number)
   const date = new Date(Date.UTC(year, month - 1, day + days, 12))
@@ -717,5 +743,6 @@ module.exports = {
   refreshAccessToken,
   revokeToken,
   syncData: syncGoogleHealthData,
+  exportExerciseTcx,
   __test: { dailyRollup, translateGoogleHealth, dateFromCivil, durationSeconds },
 }

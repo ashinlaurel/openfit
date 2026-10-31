@@ -42,6 +42,21 @@ afterAll(async () => {
   rmSync(dataDir, { recursive: true, force: true })
 })
 describe('OpenFit cloud device connection', () => {
+  it('stores native records behind pairing auth, exposes body history, and applies deletions', async () => {
+    expect((await fetch(`${apiUrl}/v1/health-connect`)).status).toBe(401)
+    const config = await cloud.pair(apiUrl, 'PAIRTEST')
+    const upload = (records: unknown[], deletedIds: string[] = []) => cloud.request(config, '/v1/health-connect', { method: 'POST', body: JSON.stringify({ version: 1, deviceId: 'test-phone', records, deletedIds }) })
+    const reading = { id: 'bone-1', type: 'BoneMass', origin: 'com.fitdays.app', time: '2026-10-27T08:00:00Z', modifiedAt: '2026-10-27T08:00:00Z', offsetMinutes: 330, value: 3.1 }
+    expect((await upload([reading])).summary.records).toBe(1)
+    await upload([reading])
+    const cached = (await cloud.request(config, '/v1/body-history')).history
+    expect(cached.days['2026-10-27'].metrics.boneMassKg.value).toBe(3.1)
+    await cloud.writeBodyHistory(config, cached)
+    await upload([], ['bone-1'])
+    await cloud.writeBodyHistory(config, cached)
+    expect((await cloud.request(config, '/v1/body-history')).history.days['2026-10-27']?.metrics.boneMassKg).toBeUndefined()
+    await expect(upload([{ ...reading, value: -1 }])).rejects.toThrow('Invalid Health Connect')
+  })
   it('pairs and reads the original profile with display names supplied separately', async () => {
     const config = await cloud.pair(apiUrl, 'PAIRTEST')
     const result = await cloud.openGym(config)
@@ -56,4 +71,20 @@ describe('OpenFit cloud device connection', () => {
     const result = await fetch(`${apiUrl}/v1/archive`, { method: 'PUT', headers: { authorization: 'Bearer test-device-token', 'content-type': 'application/json' }, body: JSON.stringify({ baseRev: 0, archive: { version: 1, source: 'google-health', activities: [] } }) })
     expect(result.status).toBe(400)
   })
+})
+it('persists encrypted body history and merges concurrent metric updates without overwriting other archives', async () => {
+  const config = await cloud.pair(apiUrl, 'PAIRTEST')
+  const entry = (value: number, updatedAt = '2026-10-27T08:00:00.000Z') => ({ value, updatedAt })
+  expect((await fetch(`${apiUrl}/v1/body-history`)).status).toBe(401)
+  await Promise.all([
+    cloud.writeBodyHistory(config, { version: 1, days: { '2026-10-27': { metrics: { weightKg: entry(92.9) } } } }),
+    cloud.writeBodyHistory(config, { version: 1, days: { '2026-10-27': { metrics: { bodyFat: entry(21.3) } } } }),
+  ])
+  const { history } = await cloud.request(config, '/v1/body-history')
+  expect(history.days['2026-10-27'].metrics).toMatchObject({ weightKg: { value: 92.9 }, bodyFat: { value: 21.3 } })
+  const stale = await cloud.writeBodyHistory(config, { version: 1, days: { '2026-10-27': { metrics: { weightKg: entry(100, '2026-10-26T08:00:00.000Z') } } } })
+  expect(stale.history.days['2026-10-27'].metrics.weightKg.value).toBe(92.9)
+  await cloud.writeArchive(config, { version: 1, todos: { version: 1, tasks: [] }, habits: { version: 1, habits: [] }, reports: { version: 1, reports: [] } }, 0)
+  expect((await cloud.request(config, '/v1/body-history')).history).toEqual(history)
+  await expect(cloud.writeBodyHistory(config, { version: 1, days: { '2026-10-27': { metrics: { weightKg: entry(-5) } } } })).rejects.toThrow('Invalid body')
 })

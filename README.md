@@ -137,7 +137,7 @@ The connection is working when OpenFit shows **Google Health** instead of **Demo
 
 ### Security note
 
-The Client Secret, OAuth tokens, and health cache stay in Electron's main process and are encrypted with `safeStorage` using Keychain on macOS, Credential Manager on Windows, or an available secret store on Linux. They are not exposed to the renderer or written to the repository.
+The Client Secret, OAuth tokens, and local health cache are encrypted with Electron `safeStorage` using Keychain on macOS, Credential Manager on Windows, or an available secret store on Linux. When the VM is paired, allowlisted health metric snapshots are encrypted on the VM; credentials, profile identity, and GPS route files are excluded. OAuth credentials remain in Electron's main process and are not written to the repository.
 
 A Client Secret distributed in a desktop binary is not a durable global secret. The current setup is appropriate for personal use and development. A public release should move the OAuth code exchange to a small backend and complete Google's verification and security-review requirements.
 

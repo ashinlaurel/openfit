@@ -1,3 +1,6 @@
+import bodyHistory from './body-history.cjs'
+import healthHistory from './health-history.cjs'
+import healthConnect from './health-connect.cjs'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
@@ -12,6 +15,7 @@ const gymUrl = String(process.env.OPEN_GYM_API_URL || '').replace(/\/+$/, '')
 const keyText = process.env.STORAGE_KEY || ''
 const key = /^[a-f0-9]{64}$/i.test(keyText) ? Buffer.from(keyText, 'hex') : Buffer.from(keyText, 'base64')
 const maxArchiveBytes = 40 * 1024 * 1024
+const maxHealthArchiveBytes = 100 * 1024 * 1024
 const maxPdfBytes = 20 * 1024 * 1024
 const writes = new Map()
 const pairAttempts = new Map()
@@ -155,6 +159,68 @@ async function handle(req, res) {
       return response(res, 200, { ...result, exerciseNames: names })
     }
     catch (error) { return response(res, error.status || 502, { error: error.message }) }
+  }
+  if (url.pathname === '/v1/health-connect' && ['GET', 'POST'].includes(req.method)) {
+    let incoming = null
+    if (req.method === 'POST') incoming = healthConnect.validate(await jsonBody(req, 6 * 1024 * 1024))
+    return serialized(account.uid, async () => {
+      const bytes = readEncrypted(account.uid, 'health-connect.enc', 'health-connect')
+      const current = bytes ? JSON.parse(bytes.toString('utf8')) : null
+      const next = incoming ? healthConnect.merge(current, incoming) : current
+      if (incoming) {
+        const data = Buffer.from(JSON.stringify(next))
+        if (data.length > 50 * 1024 * 1024) return response(res, 507, { error: 'Health Connect archive has reached its storage limit.' })
+        writeEncrypted(account.uid, 'health-connect.enc', 'health-connect', data)
+      }
+      return response(res, 200, { summary: healthConnect.summary(next) })
+    })
+  }
+  if (url.pathname === '/v1/body-history' && ['GET', 'PUT'].includes(req.method)) {
+    let incoming = null
+    if (req.method === 'PUT') {
+      try { incoming = (await jsonBody(req, 5 * 1024 * 1024)).history }
+      catch (error) { return response(res, error.status || 400, { error: error.message }) }
+      if (incoming?.version !== 1 || !incoming.days || typeof incoming.days !== 'object' || Array.isArray(incoming.days) || Object.keys(incoming.days).length > 40000 || JSON.stringify(bodyHistory.normalize(incoming)) !== JSON.stringify(incoming)) return response(res, 400, { error: 'Invalid body measurement history.' })
+    }
+    return serialized(account.uid, async () => {
+      try {
+        const bytes = readEncrypted(account.uid, 'body-history.enc', 'body-history')
+        const current = bodyHistory.withoutHealthConnect(bytes ? JSON.parse(bytes.toString('utf8')) : null)
+        const history = incoming ? bodyHistory.merge(current, bodyHistory.withoutHealthConnect(incoming)) : current
+        if (incoming) writeEncrypted(account.uid, 'body-history.enc', 'body-history', Buffer.from(JSON.stringify(history)))
+        const nativeBytes = readEncrypted(account.uid, 'health-connect.enc', 'health-connect')
+        const native = nativeBytes ? healthConnect.bodyHistory(JSON.parse(nativeBytes.toString('utf8'))) : null
+        return response(res, 200, { history: bodyHistory.merge(history, native) })
+      } catch { return response(res, 500, { error: 'Could not access the encrypted body history.' }) }
+    })
+  }
+  if (url.pathname === '/v1/health-history' && ['GET', 'PUT'].includes(req.method)) {
+    let incoming = null
+    if (req.method === 'PUT') {
+      try { incoming = (await jsonBody(req, healthHistory.MAX_SNAPSHOT_BYTES + 4096)).snapshot }
+      catch (error) { return response(res, error.status || 400, { error: error.message }) }
+      if (!incoming || JSON.stringify(healthHistory.cleanSnapshot(incoming)) !== JSON.stringify(incoming)) return response(res, 400, { error: 'Invalid Google Health snapshot.' })
+    }
+    return serialized(account.uid, async () => {
+      try {
+        const bytes = readEncrypted(account.uid, 'health-history.enc', 'health-history')
+        if (bytes?.length > maxHealthArchiveBytes) return response(res, 507, { error: 'The encrypted health archive exceeds its storage limit.' })
+        const current = bytes ? healthHistory.normalize(JSON.parse(bytes.toString('utf8'))) : healthHistory.normalize(null)
+        if (req.method === 'GET') {
+          const date = url.searchParams.get('date')
+          if (date) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return response(res, 400, { error: 'Invalid health archive date.' })
+            return response(res, 200, { snapshot: current.snapshots[date] || null })
+          }
+          return response(res, 200, { summary: healthHistory.summary(current) })
+        }
+        const history = healthHistory.merge(current, { version: 1, snapshots: { [incoming.date]: incoming } })
+        const serialized = Buffer.from(JSON.stringify(history))
+        if (serialized.length > maxHealthArchiveBytes) return response(res, 507, { error: 'The encrypted health archive has reached its storage limit.' })
+        writeEncrypted(account.uid, 'health-history.enc', 'health-history', serialized)
+        return response(res, 200, { summary: healthHistory.summary(history), storedDate: incoming.date })
+      } catch { return response(res, 500, { error: 'Could not access the encrypted health archive.' }) }
+    })
   }
   if (url.pathname === '/v1/archive' && req.method === 'GET') {
     try {

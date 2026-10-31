@@ -10,6 +10,8 @@ const { fileURLToPath } = require('node:url')
 const googleHealth = require('./google-health-service.cjs')
 const fitbitLegacy = require('./fitbit-legacy-service.cjs')
 const healthCache = require('./health-cache.cjs')
+const bodyHistory = require('../cloud/body-history.cjs')
+const healthHistory = require('../cloud/health-history.cjs')
 const drinkingStore = require('./drinking-store.cjs')
 const todoStore = require('./todo-store.cjs')
 const habitStore = require('./habit-store.cjs')
@@ -40,6 +42,11 @@ let oauthServer = null
 let oauthTimeout = null
 let credentialFile = null
 let cacheFile = null
+let routeCacheFile = null
+let bodyHistoryFile = null
+let bodyHistorySyncStatus = { syncedAt: null, error: null }
+let healthHistoryFile = null
+let healthHistorySyncStatus = { syncedAt: null, error: null, summary: null }
 let cloudFile = null
 let gymCacheFile = null
 let workoutLinksFile = null
@@ -224,6 +231,7 @@ async function startOAuthFlow() {
         const token = await service.exchangeAuthorizationCode(credentials.config, code, pkce.verifier)
         saveCredentials({ ...credentials, token, lastSyncAt: null })
         deleteIfPresent(cacheFile)
+        deleteIfPresent(routeCacheFile)
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         response.end(oauthPage(true, service.provider === 'google-health' ? 'Google Health is ready.' : 'Fitbit legacy is ready.'))
         mainWindow?.webContents.send('fitbit:auth-complete', { ok: true })
@@ -310,9 +318,90 @@ async function syncData(date) {
   }
   if (getCredentials().token?.access_token !== credentials.token.access_token) throw new Error('Health connection changed during sync.')
   writeSecure(cacheFile, healthCache.storeDay(readSecure(cacheFile, null), payload))
+  const snapshot = healthHistory.fromPayload(payload)
+  if (snapshot) writeSecure(healthHistoryFile, healthHistory.merge(readSecure(healthHistoryFile, null), { version: 1, snapshots: { [snapshot.date]: snapshot } }))
+  readBodyHistory()
+  void scheduleBodyHistorySync()
+  if (snapshot) void scheduleHealthHistorySync(false, snapshot.date)
   credentials.lastSyncAt = payload.generatedAt
   saveCredentials(credentials)
   return payload
+}
+
+async function getExerciseRoute(name, refresh = false) {
+  if (typeof name !== 'string' || !/^users\/[a-zA-Z0-9_-]+\/dataTypes\/exercise\/dataPoints\/[a-zA-Z0-9_-]+$/.test(name)) throw new Error('Invalid exercise resource.')
+  let credentials = getCredentials()
+  if (providerFor(credentials).provider !== 'google-health' || !credentials.token) throw new Error('Connect Google Health to load routes.')
+  const archive = healthCache.normalizeArchive(readSecure(cacheFile, null))
+  const activity = Object.values(archive.days).flatMap(day => day.endpoints?.activities?.activities || []).find(item => String(item.logId) === name)
+  if (!activity || activity.hasGps !== true) throw new Error('No synced GPS activity matches this route.')
+  const revision = `${activity.startTime}:${activity.endTime}`
+  const cached = readSecure(routeCacheFile, {})[name]
+  if (!refresh && cached?.revision === revision && typeof cached.tcx === 'string') return { tcx: cached.tcx, cached: true }
+  credentials = await validAccessToken(credentials)
+  const tcx = await googleHealth.exportExerciseTcx(credentials.token.access_token, name)
+  if (getCredentials().token?.access_token !== credentials.token.access_token) throw new Error('Health connection changed while loading the route.')
+  const routes = readSecure(routeCacheFile, {})
+  routes[name] = { tcx, revision, savedAt: new Date().toISOString() }
+  writeSecure(routeCacheFile, routes)
+  return { tcx, cached: false }
+}
+
+function readBodyHistory() {
+  const history = bodyHistory.merge(readSecure(bodyHistoryFile, null), bodyHistory.fromHealthArchive(healthCache.normalizeArchive(readSecure(cacheFile, null))))
+  writeSecure(bodyHistoryFile, history)
+  return history
+}
+function bodyHistoryResult() {
+  return { history: readBodyHistory(), ...bodyHistorySyncStatus, configured: !!getCloudCredentials()?.token }
+}
+function scheduleBodyHistorySync() {
+  const operation = cloudWriteQueue.then(async () => {
+    const config = getCloudCredentials()
+    if (!config?.token) return bodyHistoryResult()
+    const result = await cloudService.writeBodyHistory(config, readBodyHistory())
+    if (getCloudCredentials()?.user?.id !== config.user?.id || getCloudCredentials()?.apiUrl !== config.apiUrl || !getCloudCredentials()?.token) throw new Error('Cloud connection changed during body history sync.')
+    writeSecure(bodyHistoryFile, bodyHistory.merge(bodyHistory.withoutHealthConnect(readBodyHistory()), result.history))
+    writeSecure(cloudFile, config)
+    bodyHistorySyncStatus = { syncedAt: new Date().toISOString(), error: null }
+    return bodyHistoryResult()
+  }).catch(error => {
+    bodyHistorySyncStatus = { ...bodyHistorySyncStatus, error: error.message }
+    return bodyHistoryResult()
+  })
+  cloudWriteQueue = operation.then(() => undefined)
+  return operation
+}
+function healthHistoryResult() {
+  const archive = healthHistory.normalize(readSecure(healthHistoryFile, null))
+  return { configured: !!getCloudCredentials()?.token, syncedAt: healthHistorySyncStatus.syncedAt, error: healthHistorySyncStatus.error, summary: healthHistorySyncStatus.summary || healthHistory.summary(archive) }
+}
+function scheduleHealthHistorySync(all = true, date = null) {
+  const operation = cloudWriteQueue.then(async () => {
+    const config = getCloudCredentials()
+    if (!config?.token) return healthHistoryResult()
+    const archive = healthHistory.normalize(readSecure(healthHistoryFile, null))
+    const dates = Object.keys(archive.snapshots).sort()
+    if (!dates.length) return healthHistoryResult()
+    const pending = all ? dates : dates.includes(date) ? [date] : []
+    let summary = null
+    for (const date of pending) {
+      summary = await cloudService.writeHealthSnapshot(config, archive.snapshots[date])
+    }
+    if (getCloudCredentials()?.user?.id !== config.user?.id || getCloudCredentials()?.apiUrl !== config.apiUrl || !getCloudCredentials()?.token) throw new Error('Cloud connection changed during health archive sync.')
+    writeSecure(cloudFile, config)
+    healthHistorySyncStatus = { syncedAt: new Date().toISOString(), error: null, summary: summary?.summary || healthHistory.summary(archive) }
+    const result = healthHistoryResult()
+    mainWindow?.webContents.send('fitbit:health-history-status', result)
+    return result
+  }).catch(error => {
+    healthHistorySyncStatus = { ...healthHistorySyncStatus, error: error.message }
+    const result = healthHistoryResult()
+    mainWindow?.webContents.send('fitbit:health-history-status', result)
+    return result
+  })
+  cloudWriteQueue = operation.then(() => undefined)
+  return operation
 }
 
 function developmentUrl() {
@@ -836,6 +925,9 @@ function registerIpc() {
     const archive = readSecure(cacheFile, null)
     return date === undefined ? healthCache.latestDay(archive) : healthCache.cachedDay(archive, date)
   })
+  trustedHandle('fitbit:get-body-history', refresh => refresh === true ? scheduleBodyHistorySync() : bodyHistoryResult())
+  trustedHandle('fitbit:get-health-history-status', () => healthHistoryResult())
+  trustedHandle('fitbit:sync-health-history', () => scheduleHealthHistorySync(true))
   trustedHandle('fitbit:get-cached-archive', () => healthCache.normalizeArchive(readSecure(cacheFile, null)))
   trustedHandle('fitbit:save-config', (input) => {
     if (syncInFlight) throw new Error('Wait for the sync to finish before changing the configuration.')
@@ -844,7 +936,7 @@ function registerIpc() {
     const oauthIdentityChanged = ['provider', 'clientId', 'clientSecret', 'redirectUri']
       .some((key) => String(credentials.config?.[key] || '') !== String(config[key] || ''))
     saveCredentials({ ...credentials, config, token: oauthIdentityChanged ? null : credentials.token, lastSyncAt: oauthIdentityChanged ? null : credentials.lastSyncAt })
-    if (oauthIdentityChanged) deleteIfPresent(cacheFile)
+    if (oauthIdentityChanged) { deleteIfPresent(cacheFile); deleteIfPresent(routeCacheFile) }
     return publicStatus()
   })
   trustedHandle('fitbit:connect', () => {
@@ -865,6 +957,7 @@ function registerIpc() {
       deleteIfPresent(credentialFile)
     }
     deleteIfPresent(cacheFile)
+    deleteIfPresent(routeCacheFile)
     closeOAuthServer()
     return publicStatus()
   })
@@ -873,6 +966,14 @@ function registerIpc() {
     const result = await queueHealthSync(String(date))
     void warmHealthWeek()
     return result
+  })
+  trustedHandle('fitbit:get-exercise-route', (name, refresh) => getExerciseRoute(name, refresh === true))
+  trustedHandle('fitbit:export-exercise-route', async name => {
+    const { tcx } = await getExerciseRoute(name)
+    const result = await dialog.showSaveDialog(mainWindow, { title: 'Export GPS activity', defaultPath: 'openfit-workout.tcx', filters: [{ name: 'Training Center XML', extensions: ['tcx'] }] })
+    if (result.canceled || !result.filePath) return { canceled: true }
+    fs.writeFileSync(result.filePath, tcx, { mode: 0o600 })
+    return { canceled: false }
   })
   trustedHandle('fitbit:export-data', async () => {
     const cached = healthCache.normalizeArchive(readSecure(cacheFile, null))
@@ -901,6 +1002,8 @@ function registerIpc() {
     const config = await cloudService.pair(apiUrl, code)
     writeSecure(cloudFile, config)
     await scheduleCloudArchiveSync()
+    await scheduleBodyHistorySync()
+    await scheduleHealthHistorySync(true)
     return publicCloudStatus(config)
   })
   trustedHandle('cloud:disconnect', async () => {
@@ -939,6 +1042,21 @@ function registerIpc() {
     const result = await cloudService.readArchive(config)
     writeSecure(cloudFile, config)
     return result
+  })
+  trustedHandle('cloud:get-health-snapshot', async date => {
+    if (!validSyncDate(String(date))) throw new Error('Invalid health archive date.')
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect OpenFit to your VM first.')
+    const result = await cloudService.getHealthSnapshot(config, String(date))
+    writeSecure(cloudFile, config)
+    return result?.snapshot || null
+  })
+  trustedHandle('cloud:get-health-history-summary', async () => {
+    const config = getCloudCredentials()
+    if (!config?.token) throw new Error('Connect OpenFit to your VM first.')
+    const result = await cloudService.getHealthHistorySummary(config)
+    writeSecure(cloudFile, config)
+    return result.summary
   })
   trustedHandle('cloud:save-archive', async (archive, baseRev) => {
     const config = getCloudCredentials()
@@ -1037,6 +1155,16 @@ app.whenReady().then(() => {
   app.setPath('userData', userData)
   credentialFile = path.join(userData, 'credentials.secure.json')
   cacheFile = path.join(userData, 'health-cache.secure.json')
+  routeCacheFile = path.join(userData, 'exercise-routes.secure.json')
+  bodyHistoryFile = path.join(userData, 'body-history.secure.json')
+  healthHistoryFile = path.join(userData, 'health-history.secure.json')
+  const existingHealthHistory = healthHistory.normalize(readSecure(healthHistoryFile, null))
+  const cachedHealth = healthCache.normalizeArchive(readSecure(cacheFile, null))
+  const cachedSnapshots = Object.values(cachedHealth.days).map(payload => healthHistory.fromPayload(payload)).filter(Boolean)
+  if (cachedSnapshots.length) {
+    try { writeSecure(healthHistoryFile, healthHistory.merge(existingHealthHistory, ...cachedSnapshots.map(snapshot => ({ version: 1, snapshots: { [snapshot.date]: snapshot } })))) }
+    catch (error) { console.warn('Local health snapshot migration could not use secure storage.', error.message) }
+  }
   cloudFile = path.join(userData, 'openfit-cloud.secure.json')
   gymCacheFile = path.join(userData, 'open-gym-cache.secure.json')
   workoutLinksFile = path.join(userData, 'workout-links.secure.json')
@@ -1059,9 +1187,14 @@ app.whenReady().then(() => {
       })
     })
   }
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['https://tile.openstreetmap.org/*'] }, (details, callback) => {
+    callback({ requestHeaders: { ...details.requestHeaders, 'User-Agent': 'OpenFit/1.0 (+https://github.com/ashinlaurel/openfit)' } })
+  })
   registerIpc()
   createWindow()
   void scheduleCloudArchiveSync()
+  void scheduleBodyHistorySync()
+  void scheduleHealthHistorySync(true)
 })
 
 app.on('activate', () => {

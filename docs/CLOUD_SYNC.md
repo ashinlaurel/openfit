@@ -164,8 +164,10 @@ server connection and local provider availability without printing credentials o
 ## Cloud archive contents
 
 The cloud archive is partitioned by the Open Gym profile ID. It contains todo and habit archives,
-the reviewed report index and encrypted source PDFs. Report PDFs retain their SHA-256 identity and
-are encrypted at rest on the VM. The API does not accept Google Health data or OAuth credentials.
+the reviewed report index, encrypted source PDFs, body history, and Google Health metric snapshots.
+Report PDFs retain their SHA-256 identity and are encrypted at rest on the VM. Health snapshots are
+allowlisted (activity, sleep, body metrics, heart signals, glucose, ECG, nutrition, and related
+measurements); OAuth tokens, profile identity, paired devices, and GPS route files are excluded.
 
 Each archive write uses a revision number. If another OpenFit device saves first, the API returns
 `409` with the current archive; clients must reconcile before retrying. Local encrypted copies stay

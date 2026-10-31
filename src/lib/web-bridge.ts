@@ -1,7 +1,8 @@
 import type { WorkoutLinks } from './gym-sync'
 import type { RawFitbitPayload, RawHealthArchive, TodoArchive } from '@/types'
 import { localIso } from '@/data/demo'
-export const webMode = import.meta.env.VITE_OPENFIT_WEB === 'true' && !window.fitbit
+const hostedWebMode = document.querySelector('meta[name="openfit-mode"]')?.getAttribute('content') === 'web'
+export const webMode = !window.fitbit && (import.meta.env.VITE_OPENFIT_WEB === 'true' || hostedWebMode)
 export const sharedReportsMode = webMode && location.pathname === '/shared-reports'
 const noop = () => () => {}
 const unavailable = async (): Promise<never> => { throw new Error('This feature is available in the Mac app.') }
@@ -54,6 +55,7 @@ export function installWebBridge() {
   try { links = JSON.parse(sessionStorage.getItem('openfit-workout-links') || '{}') } catch { /* empty */ }
   window.fitbit = {
     getStatus: () => webRpc('health.status'), saveConfig: unavailable,
+    getBodyHistory: () => webRpc('health.bodyHistory'),
     connect: async () => { location.assign('/auth/health'); return { ok: true } },
     disconnect: async () => { archive = { version: 2, lastDate: null, days: {} }; return webRpc('health.disconnect') },
     sync: async date => { const day = await webRpc<RawFitbitPayload>('health.sync', date); archive.days[date] = day; archive.lastDate = date; return day },

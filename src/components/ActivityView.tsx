@@ -8,6 +8,7 @@ import { ActivityIcon, HeartIcon, TrendIcon } from './icons'
 import { formatDate, formatDecimal, formatMinutes, formatNumber, relativeTime } from '@/lib/format'
 import { collectWorkouts, knownNumber, paceLabel, workoutGroup, workoutHeartSeries, workoutMetric, workoutMinutes, type WorkoutMetric } from '@/lib/workouts'
 import { offsetDate } from '@/lib/research-insights'
+import { WorkoutRoute } from './WorkoutRoute'
 import { useWorkoutHistory } from '@/lib/use-workout-history'
 
 const zoneColors = {light:'#72a8a0',moderate:'#e2b45c',vigorous:'#e38a57',peak:'#d66c73'}
@@ -62,6 +63,7 @@ export function WorkoutDetails({item,samples,source}:{item:ActivityItem;samples:
     {item.hasGps===true&&<span className="workout-source-pill">GPS-associated recording</span>}
     {measures.length>0&&<div className="workout-detail-metrics">{measures.map(metric=><div key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></div>)}</div>}
     {elapsed!==null&&active!==null&&<div className="workout-elapsed"><span><Clock3/>Elapsed <strong>{formatMinutes(elapsed)}</strong></span><span>Active <strong>{formatMinutes(active)}</strong></span>{pause!==null&&pause>0&&<span>Paused <strong>{formatMinutes(pause)}</strong></span>}</div>}
+    {item.hasGps === true && source === 'Google Health' && <WorkoutRoute key={item.id} item={item} />}
     {series&&<section className="workout-detail-section"><div className="workout-section-heading"><h3>Heart rate through the session</h3><span>{formatNumber(series.min)}–{formatNumber(series.max)} bpm observed</span></div><LineChart values={series.values} labels={series.labels} xValues={series.xValues} color="var(--category-heart)" height={210} compact showRangeLabels showYAxis minYTickStep={20} formatter={value=>`${formatNumber(value)} bpm`} ariaLabel="Workout heart rate by elapsed minutes"/><p className="workout-caption">{series.bucketMinutes}-minute averages · {series.observedBins} of {series.totalBins} intervals contain samples. Gaps are left open; the timeline includes pauses.</p></section>}
     <Zones zones={item.heartZoneMinutes}/>
     <SplitDetails splits={item.splits || []}/>

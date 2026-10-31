@@ -294,3 +294,23 @@ it('preserves movement energy, timestamped intensity and missing intensity categ
   expect(result.movementSignals.intensity[0].activityLevelType).toBe('VERY_ACTIVE')
   expect(result.metricTrends.values.find((p:any)=>p.dateTime==='2026-10-25')).toMatchObject({activeCalories:321,moderateActiveMinutes:12,vigorousActiveMinutes:null})
 })
+
+it('exports TCX with location authorization without accepting arbitrary URLs', async () => {
+  const service = require('./google-health-service.cjs')
+  vi.useFakeTimers()
+  const fetch = vi.fn(async () => new Response('<TrainingCenterDatabase/>', { headers: { 'content-type': 'application/tcx+xml' } }))
+  vi.stubGlobal('fetch', fetch)
+  try {
+    await expect(service.exportExerciseTcx('token', 'https://evil.test/route')).rejects.toThrow('Invalid exercise')
+    expect(fetch).not.toHaveBeenCalled()
+    const pending = service.exportExerciseTcx('token', 'users/me/dataTypes/exercise/dataPoints/123')
+    await vi.runAllTimersAsync()
+    expect(await pending).toBe('<TrainingCenterDatabase/>')
+    expect(fetch).toHaveBeenCalledWith('https://health.googleapis.com/v4/users/me/dataTypes/exercise/dataPoints/123:exportExerciseTcx?alt=media', expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer token' }) }))
+    fetch.mockImplementation(async () => new Response('{}', { status: 403 }))
+    const denied = service.exportExerciseTcx('token', 'users/me/dataTypes/exercise/dataPoints/123')
+    const assertion = expect(denied).rejects.toThrow('Reconnect Google Health')
+    await vi.runAllTimersAsync()
+    await assertion
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals() }
+})

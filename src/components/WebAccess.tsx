@@ -1,13 +1,27 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { webMode } from '@/lib/web-bridge'
+
+type WebAccessActions = { install: () => Promise<void>; signOut: () => Promise<void>; installPromptAvailable: boolean; isAndroid: boolean }
+const WebAccessActionsContext = createContext<WebAccessActions | null>(null)
+export const useWebAccessActions = () => useContext(WebAccessActionsContext)
+
 export function WebAccess({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<{authenticated:boolean;name?:string}|null>(null)
   const [error, setError] = useState('')
   const [installPrompt, setInstallPrompt] = useState<Event | null>(null)
   useEffect(() => { const capture = (event: Event) => { event.preventDefault(); setInstallPrompt(event) }; window.addEventListener('beforeinstallprompt', capture); return () => window.removeEventListener('beforeinstallprompt', capture) }, [])
-  const install = async () => { const prompt = installPrompt as (Event & { prompt: () => Promise<void> }) | null; if (prompt) { await prompt.prompt(); setInstallPrompt(null) } else window.alert('In Safari, tap Share, then Add to Home Screen.') }
+  const install = async () => {
+    const prompt = installPrompt as (Event & { prompt: () => Promise<void> }) | null
+    if (prompt) { await prompt.prompt(); setInstallPrompt(null); return }
+    if (/Android/i.test(navigator.userAgent)) window.alert('In Chrome, open the ⋮ menu and choose “Install app” or “Add to Home screen”.')
+    else window.alert('In Safari, tap Share, then Add to Home Screen.')
+  }
+  const signOut = async () => {
+    const response = await fetch('/web/logout', { method: 'POST', headers: { 'x-openfit-request': '1' } })
+    if (response.ok) location.assign('/')
+  }
   useEffect(() => { if (webMode) void fetch('/web/session').then(r => { if (!r.ok) throw new Error('Could not reach OpenFit.'); return r.json() }).then(setSession).catch(e => setError(e.message)) }, [])
   if (!webMode) return children
-  if (session?.authenticated) return <><div className="web-account"><span>Private workspace</span><button onClick={() => void install()}>{installPrompt ? 'Install app' : 'Add to Home Screen'}</button><button onClick={async () => { const r = await fetch('/web/logout', {method:'POST',headers:{'x-openfit-request':'1'}}); if (r.ok) location.assign('/') }}>Sign out</button></div>{children}</>
+  if (session?.authenticated) return <WebAccessActionsContext.Provider value={{ install, signOut, installPromptAvailable: Boolean(installPrompt), isAndroid: /Android/i.test(navigator.userAgent) }}>{children}</WebAccessActionsContext.Provider>
   return <main className="web-access"><section><span className="eyebrow">YOUR PERSONAL HEALTH SPACE</span><h1>OpenFit<span>.</span></h1><p>Your training, daily habits, and health.<br/>Together, wherever you are.</p>{error ? <p role="alert">{error} <button onClick={() => location.reload()}>Retry</button></p> : session ? <><a href="/auth/google" className="web-google-button"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M21.6 12.2c0-.7-.1-1.4-.2-2.1H12v4h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.8 3-4.3 3-7.4ZM12 22c2.7 0 5-1 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1-2.6 0-4.8-1.8-5.6-4.1H3.1v2.6A10 10 0 0 0 12 22ZM6.4 14a6 6 0 0 1 0-4V7.4H3.1a10 10 0 0 0 0 9.2L6.4 14ZM12 5.9c1.5 0 2.8.5 3.8 1.5l2.8-2.8A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.9 5.4L6.4 10c.8-2.3 3-4.1 5.6-4.1Z"/></svg>Continue with Google</a><small>Access is restricted to the owner’s Google account.</small>{new URLSearchParams(location.search).has('authError') && <p role="alert">Sign-in wasn’t completed. Use the owner’s account and try again.</p>}</> : <p role="status">Connecting to your workspace…</p>}</section></main>
 }

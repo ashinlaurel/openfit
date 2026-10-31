@@ -1,4 +1,5 @@
 import { webMode, emptyWebHealth } from '@/lib/web-bridge'
+import { useWebAccessActions } from '@/components/WebAccess'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { ChevronsUpDown, LoaderCircle, RefreshCw, MessageCircle, Search, ListTodo, Flame, BookOpen, Rss, Bookmark, FileHeart, FileUp, Wine, Dumbbell } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -428,7 +429,7 @@ export default function App() {
   }
 
   const currentView = useMemo(() => {
-    const props = { data, status, navigate: setPage }
+    const props = { data, status, navigate: setPage, cloudStatus }
     if (page === 'drinking') return <DrinkingView />
     if (page === 'reports') return <ReportsView reports={reports} uploadRequest={reportUpload} />
     if (page === 'reader' && webMode) return <p>Reader is available in the Mac app.</p>
@@ -802,6 +803,7 @@ function SettingsDialog({
   onPairCloud: (apiUrl: string, code: string) => Promise<void>
   onDisconnectCloud: () => Promise<void>
 }) {
+  const webAccess = useWebAccessActions()
   const [clientId, setClientId] = useState(status.clientId)
   const [clientSecret, setClientSecret] = useState('')
   const [redirectUri, setRedirectUri] = useState(status.redirectUri)
@@ -858,7 +860,38 @@ function SettingsDialog({
     finally { setCloudBusy(false) }
   }
 
-  if (webMode) return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="settings-dialog" showCloseButton><DialogHeader><DialogTitle>OpenFit connections</DialogTitle><DialogDescription>Your private workspace and cached Google Health history are encrypted on Oracle. Saved data appears first, then refreshes in the background.</DialogDescription></DialogHeader><div className="connected-state"><h3>Google Health {status.connected ? 'connected' : 'not connected'}</h3><p>Authorize Google Health once to see your activity and health metrics here.</p><Button onClick={onConnect} disabled={connecting}>{status.connected ? 'Reconnect Google Health' : 'Connect Google Health'}</Button>{status.connected && <Button variant="outline" onClick={onDisconnect}>Disconnect Google Health</Button>}<p>Open Gym, todos, habits, and reports use your existing VM archive.</p><p className="workout-caption">The local Codex assistant and Reader remain available in the Mac app.</p></div></DialogContent></Dialog>
+  if (webMode) return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="settings-dialog web-settings-dialog" showCloseButton>
+        <DialogHeader>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Manage your health connection and OpenFit app.</DialogDescription>
+        </DialogHeader>
+        <section className="web-settings-section">
+          <div className="web-settings-heading"><span>Google Health</span><strong className={status.connected ? 'is-connected' : ''}>{status.connected ? 'Connected' : 'Not connected'}</strong></div>
+          <p>Authorize Google Health to sync your activity and health metrics.</p>
+          <div className="web-settings-actions">
+            <Button onClick={onConnect} disabled={connecting}>{connecting ? 'Connecting…' : status.connected ? 'Reconnect Google Health' : 'Connect Google Health'}</Button>
+            {status.connected && <Button variant="outline" onClick={onDisconnect}>Disconnect Google Health</Button>}
+          </div>
+        </section>
+        <section className="web-settings-section">
+          <div className="web-settings-heading"><span>OpenFit app</span></div>
+          <p>Install OpenFit on this device for quick access from your home screen.</p>
+          <Button className="web-settings-install" variant="outline" onClick={() => void webAccess?.install()}>{webAccess?.installPromptAvailable ? 'Install app' : webAccess?.isAndroid ? 'Install on Android' : 'Add to Home Screen'}</Button>
+        </section>
+        <section className="web-settings-section">
+          <div className="web-settings-heading"><span>Health Connect sync</span></div>
+          <p>Sync body measurements from your Android phone to your VM.</p>
+          <Button className="web-settings-install" variant="outline" asChild><a href="/downloads/openfit-sync-0.1.0.apk" download>Download Android sync app</a></Button>
+        </section>
+        <div className="web-settings-footer">
+          <span>Private workspace · data encrypted on Oracle</span>
+          <Button variant="destructive" onClick={() => void webAccess?.signOut()}>Sign out</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -866,7 +899,7 @@ function SettingsDialog({
         <DialogHeader>
           <div className="dialog-icon"><CloudIcon /></div>
           <DialogTitle>{status.connected && !editing ? `${providerLabel} connected` : `Connect ${providerLabel}`}</DialogTitle>
-          <DialogDescription>Google Health data stays encrypted on this computer. Open Gym data can sync to your encrypted VM archive.</DialogDescription>
+          <DialogDescription>Google Health credentials stay encrypted on this computer. Health metrics and your OpenFit data sync to your encrypted VM archive.</DialogDescription>
         </DialogHeader>
 
         {status.connected && !editing ? (
@@ -929,7 +962,7 @@ function SettingsDialog({
             {cloudStatus.error && <p className="cloud-pair-error" role="alert">{cloudStatus.error}</p>}
             <DialogFooter className="settings-footer"><Button type="submit" disabled={cloudBusy || !cloudApiUrl.trim() || pairCode.trim().length < 4}>{cloudBusy ? <LoaderIcon className="spin"/> : <CloudIcon/>} Pair Open Gym</Button></DialogFooter>
           </form>}
-          <p className="cloud-privacy-note"><ShieldIcon/> Google Health data stays on this device. OpenFit cloud stores todos, habits, and reviewed report files encrypted.</p>
+          <p className="cloud-privacy-note"><ShieldIcon/> Health metrics sync encrypted to your VM. Google credentials and GPS route files stay on this device.</p>
         </section>}
       </DialogContent>
     </Dialog>

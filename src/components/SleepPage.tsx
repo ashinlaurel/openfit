@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { DashboardData, TrendPoint } from '@/types'
+import type { DashboardData } from '@/types'
 import { createDemoData, localIso } from '@/data/demo'
 import { normalizeFitbitData } from '@/data/normalize'
 import { compactMinutes, formatDate, formatDecimal, formatMinutes, formatTime } from '@/lib/format'
 import { offsetDate } from '@/lib/research-insights'
 import { calculateSleepScore, sleepScoreForTrend } from '@/lib/sleep-score'
+import { sleepHistory } from '@/lib/sleep-history'
 import { sleepProcessingNote } from '@/lib/sleep-page'
 import { Panel, PanelHeader, EmptyValue } from './Shared'
 import { LineChart, SleepStageTimeline } from './Charts'
@@ -58,13 +59,7 @@ export function SleepView({ data }: { data: DashboardData }) {
     return [...records.values()]
   }, [archive, ready, data, end, count])
   const trends = useMemo(() => {
-    const records = new Map<string, TrendPoint>()
-    for (const day of [...days.filter(d => d !== data), data]) for (const point of day.sleep.historyTrends ?? day.trends) records.set(point.date, point)
-    for (const day of days) {
-      const point = records.get(day.selectedDate)
-      if (point) records.set(day.selectedDate, { ...point, sleepMinutes: day.sleep.totalMinutes, sleepEfficiency: day.sleep.efficiency, sleepStageTimeline: day.sleep.stageTimeline, sleepStartTime: day.sleep.startTime, sleepEndTime: day.sleep.endTime })
-    }
-    return [...records.values()].sort((a, b) => a.date.localeCompare(b.date))
+    return [...sleepHistory(days).values()].map(record => record.point).sort((a, b) => a.date.localeCompare(b.date))
   }, [days, data])
   const historyData = { ...data, trends }
   const first = offsetDate(end, 1 - count)

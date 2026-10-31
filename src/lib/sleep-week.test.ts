@@ -6,6 +6,7 @@ describe('weekly sleep timing', () => {
   it('aligns overnight bars around midnight and returns exactly seven calendar dates', () => {
     const day = createDemoData('2026-10-19')
     day.trends = []
+    day.sleep.historyTrends = []
     day.sleep.startTime = '2026-10-18T23:30:00Z'
     day.sleep.endTime = '2026-10-19T07:00:00Z'
     day.sleep.totalMinutes = 420
@@ -20,6 +21,7 @@ describe('weekly sleep timing', () => {
   it('keeps offset-free wall times unchanged even when profile and device timezones differ', () => {
     const day = createDemoData('2026-10-19')
     day.trends = []
+    day.sleep.historyTrends = []
     day.sleep.startTime = '2026-10-18T23:42:00'
     day.sleep.endTime = '2026-10-19T06:55:00'
     expect(sleepWeek([day], day.selectedDate, 'Europe/Rome').nights[6]).toMatchObject({ start: -18, end: 415 })
@@ -34,6 +36,7 @@ describe('weekly sleep timing', () => {
   it('does not invent timing from duration and expands the domain for daytime sleep', () => {
     const day = createDemoData('2026-10-19')
     day.trends = []
+    day.sleep.historyTrends = []
     day.sleep.startTime = null
     day.sleep.endTime = null
     day.sleep.totalMinutes = 0
@@ -56,5 +59,29 @@ it('uses explicit trend timing for 30 days without fabricating timing for missin
   expect(result.timedCount).toBe(30)
   expect(result.nights.at(-2)?.asleep).toBe(createDemoData('2026-10-24').sleep.totalMinutes)
   day.trends = day.trends.map(p => p.date === '2026-10-24' ? { ...p, sleepStartTime: null, sleepEndTime: null } : p)
+  day.sleep.historyTrends = day.trends
   expect(sleepWeek([day], day.selectedDate, 'Asia/Kolkata', 30).nights.at(-2)?.start).toBeNull()
+})
+
+it('uses newer history to repair an empty archived day and includes naps without changing main duration', () => {
+  const old = createDemoData('2026-10-28')
+  old.generatedAt = '2026-10-27T19:52:00Z'
+  old.sleep.totalMinutes = null
+  old.sleep.startTime = old.sleep.endTime = null
+  old.sleep.sessions = []
+  const latest = createDemoData('2026-10-31')
+  latest.generatedAt = '2026-10-31T15:02:00Z'
+  latest.sleep.historyTrends = [{ ...latest.trends[0], date: old.selectedDate, sleepMinutes: 410, sleepStartTime: '2026-10-27T21:18:00Z', sleepEndTime: '2026-10-28T04:34:00Z' }]
+  const nap = { ...latest.sleep.sessions![1], id: 'nap-28', date: old.selectedDate, startTime: '2026-10-28T06:15:00Z', endTime: '2026-10-28T08:12:00Z', totalMinutes: 115 }
+  latest.sleep.historySessions = [nap]
+  for (const days of [[old, latest], [latest, old]]) {
+    const result = sleepWeek(days, latest.selectedDate, 'Asia/Kolkata')
+    const night = result.nights.find(n => n.date === old.selectedDate)!
+    expect(night).toMatchObject({ start: 168, end: 604, asleep: 410 })
+    expect(night.sessions).toEqual([expect.objectContaining({ id: 'nap-28', start: 705, end: 822, asleep: 115 })])
+    expect(result.max).toBeGreaterThanOrEqual(822)
+  }
+  // A newer response can remove a previously recorded session.
+  latest.sleep.historySessions = []
+  expect(sleepWeek([old, latest], latest.selectedDate, 'Asia/Kolkata').nights.find(n => n.date === old.selectedDate)?.sessions).toEqual([])
 })

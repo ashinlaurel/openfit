@@ -247,8 +247,13 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
   const mainSession = sleepRecord ? sessions[asArray(asObject(e.sleep).sleep).indexOf(sleepRecord)] : null
   if (mainSession) mainSession.isMainSleep = true
   const sleepGoal = asObject(asObject(e.sleepGoal).goal)
-  const latestWeight = asArray(asObject(e.bodyWeight).weight).at(-1) ?? null
-  const latestFat = asArray(asObject(e.bodyFat).fat).at(-1) ?? null
+  const weightRecords = asArray(asObject(e.bodyWeight).weight).filter(item => typeof item.date === 'string' && item.date <= payload.date).sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  const fatRecords = asArray(asObject(e.bodyFat).fat).filter(item => typeof item.date === 'string' && item.date <= payload.date).sort((a, b) => String(a.date).localeCompare(String(b.date)))
+  const latestWeight = weightRecords.filter(item => numeric(item.weight) !== null).at(-1) ?? null
+  const latestFat = fatRecords.filter(item => numeric(item.fat) !== null).at(-1) ?? null
+  const heightCm = numeric(profile.height)
+  const reportedBmi = numeric(latestWeight?.bmi ?? profile.bmi)
+  const calculatedBmi = heightCm !== null && heightCm > 0 && numeric(latestWeight?.weight) !== null && Number(latestWeight?.weight) > 0 ? Number(latestWeight?.weight) / (heightCm / 100) ** 2 : null
   const weightGoal = asObject(asObject(e.weightGoal).goal)
   const waterSummary = asObject(asObject(e.water).summary)
   const waterGoal = asObject(asObject(e.waterGoal).goal)
@@ -432,6 +437,7 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
     },
     sleep: {
       historyTrends: trends,
+      historySessions: sleepTrendRecords.map((record, index) => ({ ...normalizeSleepSession(record, index, payload.source === 'google-health'), date: String(record.dateOfSleep) })),
       sessions,
       mainSessionId: mainSession?.id ?? null,
       details: normalizeSleepDetails(e.sleepDetails),
@@ -452,7 +458,11 @@ export function normalizeFitbitData(payload: RawFitbitPayload): DashboardData {
     body: {
       weightKg: numeric(latestWeight?.weight),
       weightGoalKg: numeric(weightGoal.weight),
-      bmi: numeric(latestWeight?.bmi ?? profile.bmi),
+      weightDate: latestWeight?.date ?? null,
+      bodyFatDate: latestFat?.date ?? null,
+      heightCm,
+      bmi: reportedBmi !== null && reportedBmi > 0 ? reportedBmi : calculatedBmi,
+      bmiCalculated: !(reportedBmi !== null && reportedBmi > 0) && calculatedBmi !== null,
       bodyFat: numeric(latestFat?.fat ?? profile.bodyFat),
       waterMl: numeric(waterSummary.water),
       waterGoalMl: numeric(waterGoal.goal),

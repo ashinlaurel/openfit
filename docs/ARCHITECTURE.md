@@ -6,8 +6,8 @@
 - Google Health API v4 as the primary provider, with the legacy Fitbit Web API isolated as a fallback.
 - No tokens or secrets in the renderer.
 - Partial consent and missing sensors must not block the dashboard.
-- Google Health OAuth credentials and health cache stay on the desktop. Completed days are read locally without new provider requests. If `safeStorage` is unavailable, or Linux selects the unencrypted `basic_text` backend, saving fails explicitly.
-- Optional Open Gym pairing uses the user's Open Gym profile as the identity for encrypted cloud storage of OpenFit todos, habits, report metadata, and PDF files. Open Gym workout data remains in Open Gym's own profile document.
+- Google Health OAuth credentials stay on the desktop; the local health cache is encrypted with OS secure storage. When Open Gym is paired, allowlisted daily metric snapshots are also encrypted on the VM. Completed days are read locally without new provider requests. If `safeStorage` is unavailable, or Linux selects the unencrypted `basic_text` backend, saving fails explicitly.
+- Optional Open Gym pairing uses the user's Open Gym profile as the identity for encrypted cloud storage of health snapshots, body history, OpenFit todos, habits, report metadata, and PDF files. Open Gym workout data remains in Open Gym's own profile document.
 - One normalization layer, so views do not depend on remote API shapes.
 - Optional chat through Codex app-server. The project contains no API key, and no health data is sent until the user sends a message.
 

@@ -1,8 +1,10 @@
 import { movementHours } from '@/lib/movement'
 import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import type { ActivityItem, DashboardData, FitbitAuthStatus, PageId, TimePoint } from '@/types'
+import type { ActivityItem, CloudStatus, DashboardData, FitbitAuthStatus, PageId, TimePoint } from '@/types'
 import { BulletChart, ColumnChart, LineChart, RadialProgress, SleepStageBar, SleepStageTimeline } from './Charts'
 import { DuoIcon, EmptyValue, MetricTile, Panel, PanelHeader } from './Shared'
 import type { AppIcon } from './icons'
@@ -51,6 +53,7 @@ interface ViewProps {
   data: DashboardData
   status: FitbitAuthStatus
   navigate: (page: PageId) => void
+  cloudStatus: CloudStatus
 }
 
 interface Signal {
@@ -648,89 +651,7 @@ export function HealthView({ data }: ViewProps) {
 
 export { SleepView } from './SleepPage'
 
-function BodyMetric({ label, value, unit, icon: Icon, note }: { label: string; value: string; unit?: string; icon: AppIcon; note: string }) {
-  return (
-    <div className="body-metric">
-      <DuoIcon icon={Icon} className="body-metric-icon" />
-      <div><span>{label}</span><strong>{value}{unit && <small>{unit}</small>}</strong><p>{note}</p></div>
-    </div>
-  )
-}
-
-export function BodyView({ data }: ViewProps) {
-  const weightValues = data.trends.map((point) => point.weight)
-  const weightCount = weightValues.filter(hasValue).length
-  const hasComposition = hasValue(data.body.bmi) || hasValue(data.body.bodyFat)
-  const hasDaily = hasValue(data.body.waterMl) || hasValue(data.body.caloriesIn)
-  const bodyTrendValues = [
-    data.trends.map((point) => point.bodyFat),
-    data.trends.map((point) => point.waterMl),
-    data.trends.map((point) => point.caloriesIn),
-  ]
-  const hasBodyTrends = bodyTrendValues.some((values) => values.filter(hasValue).length > 1)
-  return (
-    <div className="page-stack body-page">
-      <div className="body-layout">
-        {hasValue(data.body.weightKg) && (
-          <Panel className="weight-card" category="body">
-            <PanelHeader eyebrow={`${weightCount} measurements`} title="Weight" icon={BodyIcon} />
-            <div className="body-weight-value"><strong>{formatDecimal(data.body.weightKg)}</strong><span>kg</span></div>
-            {hasValue(data.body.weightGoalKg) && (
-              <div className="weight-goal-copy">
-                <span>Goal {formatDecimal(data.body.weightGoalKg)} kg</span>
-                <strong>{formatDecimal(data.body.weightKg - data.body.weightGoalKg)} kg difference</strong>
-              </div>
-            )}
-            {weightCount > 1 && (
-              <LineChart values={weightValues} labels={trendLabels(data)} xValues={trendXValues(data)} target={data.body.weightGoalKg} targetLabel="Goal" height={238} formatter={(value) => `${formatDecimal(value)} kg`} ariaLabel="Weight trend" />
-            )}
-          </Panel>
-        )}
-
-        {(hasComposition || hasDaily) && (
-          <div className="body-side-stack">
-            {hasComposition && (
-              <Panel className="body-metrics-panel" category="body">
-                <PanelHeader eyebrow="Latest measurement" title="Composition" icon={GaugeIcon} />
-                <div className="body-metrics-list">
-                  {hasValue(data.body.bmi) && <BodyMetric label="BMI" value={formatDecimal(data.body.bmi)} icon={GaugeIcon} note="Body mass index" />}
-                  {hasValue(data.body.bodyFat) && <BodyMetric label="Body fat" value={formatDecimal(data.body.bodyFat)} unit="%" icon={SignalIcon} note="Estimated percentage" />}
-                </div>
-              </Panel>
-            )}
-            {hasDaily && (
-              <Panel className="body-metrics-panel body-daily-panel" category="body">
-                <PanelHeader eyebrow="Day" title="Balance" icon={NutritionIcon} />
-                {hasValue(data.body.waterMl) && (
-                  <BulletChart
-                    value={data.body.waterMl}
-                    target={data.body.waterGoalMl}
-                    max={Math.max(data.body.waterMl, data.body.waterGoalMl ?? 0) * 1.08}
-                    label="Water"
-                    valueLabel={`${formatNumber(data.body.waterMl)} ml${data.body.waterGoalMl ? ` / ${formatNumber(data.body.waterGoalMl)} ml` : ''}`}
-                    color="var(--color-cyan)"
-                  />
-                )}
-                {hasValue(data.body.caloriesIn) && <BodyMetric label="Calories consumed" value={formatNumber(data.body.caloriesIn)} unit="kcal" icon={CaloriesIcon} note="Recorded total" />}
-              </Panel>
-            )}
-          </div>
-        )}
-      </div>
-      {hasBodyTrends && (
-        <section>
-          <SectionTitle title="Body and log trends" copy="Only measurements recorded during the synced period." />
-          <div className="metric-trend-grid">
-            <MetricTrendPanel data={data} category="body" icon={SignalIcon} title="Body fat" values={data.trends.map((point) => point.bodyFat)} formatter={(value) => `${formatDecimal(value)}%`} />
-            <MetricTrendPanel data={data} category="body" icon={WaterIcon} title="Hydration" values={data.trends.map((point) => point.waterMl)} formatter={(value) => `${formatNumber(value)} ml`} />
-            <MetricTrendPanel data={data} category="body" icon={CaloriesIcon} title="Calories consumed" values={data.trends.map((point) => point.caloriesIn)} formatter={(value) => `${formatNumber(value)} kcal`} />
-          </div>
-        </section>
-      )}
-      {!hasBodyData(data) && <EmptyValue>No body measurements available for this account.</EmptyValue>}
-    </div>
-  )
-}
+export { BodyView } from './BodyPage'
 
 function CoverageRow({ icon: Icon, label, items }: { icon: AppIcon; label: string; items: string[] }) {
   return (
@@ -742,7 +663,23 @@ function CoverageRow({ icon: Icon, label, items }: { icon: AppIcon; label: strin
   )
 }
 
-export function DevicesView({ data, status }: ViewProps) {
+export function DevicesView({ data, status, cloudStatus }: ViewProps) {
+  const [healthBackup, setHealthBackup] = useState<{ configured: boolean; syncedAt: string | null; error: string | null; summary: { snapshots: number; firstDate: string | null; lastDate: string | null; endpoints: string[] } } | null>(null)
+  const [syncingHealthBackup, setSyncingHealthBackup] = useState(false)
+  useEffect(() => {
+    let active = true
+    if (!window.fitbit?.syncHealthHistory) return () => { active = false }
+    void window.fitbit.getHealthHistoryStatus?.().then(result => { if (active) setHealthBackup(result) })
+    void window.cloud?.getHealthHistorySummary?.().then(summary => { if (active) setHealthBackup(current => current ? { ...current, configured: true, summary } : { configured: true, syncedAt: null, error: null, summary }) }).catch(error => { if (active) setHealthBackup(current => current ? { ...current, error: error.message } : null) })
+    const unsubscribe = window.fitbit.onHealthHistorySync?.(result => { if (active) setHealthBackup(result) })
+    return () => { active = false; unsubscribe?.() }
+  }, [])
+  const syncHealthBackup = async () => {
+    if (!window.fitbit?.syncHealthHistory || syncingHealthBackup) return
+    setSyncingHealthBackup(true)
+    try { setHealthBackup(await window.fitbit.syncHealthHistory()) }
+    finally { setSyncingHealthBackup(false) }
+  }
   const movement = [
     hasValue(data.activity.steps) && 'steps',
     data.activity.stepsIntraday.length > 0 && 'steps per hour',
@@ -770,6 +707,10 @@ export function DevicesView({ data, status }: ViewProps) {
 
   return (
     <div className="page-stack devices-page">
+      {window.fitbit?.syncHealthHistory && <Panel className="health-vm-backup" category="device">
+        <div className="health-vm-backup-copy"><PanelHeader eyebrow={healthBackup?.syncedAt ? 'Encrypted VM backup' : 'VM backup'} title="Google Health archive" icon={CloudIcon} /><span>{healthBackup?.summary.snapshots ? `${healthBackup.summary.snapshots} days · ${healthBackup.summary.endpoints.length} data types` : 'No archived history yet'}{healthBackup?.summary.firstDate && healthBackup.summary.lastDate ? ` · ${healthBackup.summary.firstDate}–${healthBackup.summary.lastDate}` : ''}</span>{healthBackup?.error && <small>{healthBackup.error}</small>}</div>
+        <Button variant="outline" onClick={() => void syncHealthBackup()} disabled={syncingHealthBackup || !cloudStatus.configured}>{syncingHealthBackup ? 'Syncing…' : cloudStatus.configured ? 'Sync archive' : 'Pair VM in Settings'}</Button>
+      </Panel>}
       <div className="data-overview">
         <div className="data-source-column">
           <Panel className="device-card" category="device">

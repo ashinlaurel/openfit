@@ -162,6 +162,11 @@ async function rpc(method, args, auth) {
   if (method === 'reports.revokeShare') { fs.rmSync(shareFile, { force: true }); return { ok: true } }
 
   if (method === 'health.status') return healthStatus()
+  if (method === 'health.bodyHistory') {
+    const result = await cloud.request(config, '/v1/body-history')
+    persist()
+    return { history: result.history, configured: true, syncedAt: new Date().toISOString(), error: null }
+  }
   if (method === 'health.cached') {
     if (args[0] !== undefined && !validDate(args[0])) throw fail('Invalid cache date.')
     return args[0] === undefined ? healthCache.latestDay(state.healthArchive) : healthCache.cachedDay(state.healthArchive, args[0])
@@ -279,9 +284,13 @@ async function handle(req, res) {
   const publicDir = path.resolve(here, 'public'), requested = path.resolve(publicDir, '.' + decodeURIComponent(url.pathname))
   if (!requested.startsWith(publicDir + path.sep) && requested !== publicDir) return json(res, 404, { error: 'Not found.' })
   const file = fs.existsSync(requested) && fs.statSync(requested).isFile() ? requested : path.join(publicDir, 'index.html')
-  const ext = path.extname(file), mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain' }[ext] || 'application/octet-stream'
+  const ext = path.extname(file), mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.txt': 'text/plain', '.apk': 'application/vnd.android.package-archive' }[ext] || 'application/octet-stream'
   res.writeHead(200, { 'content-type': mime, 'cache-control': ext === '.html' || ext === '.webmanifest' || path.basename(file) === 'sw.js' ? 'no-store' : 'public, max-age=3600', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" })
   if (req.method === 'HEAD') return res.end()
+  if (file === path.join(publicDir, 'index.html')) {
+    const html = fs.readFileSync(file, 'utf8').replace('</head>', '<meta name="openfit-mode" content="web"></head>')
+    return res.end(html)
+  }
   fs.createReadStream(file).pipe(res)
 }
 http.createServer((req, res) => { handle(req, res).catch(error => { if (!res.headersSent) json(res, error.status || 500, { error: error.status ? error.message : 'The request could not be completed. Please try again.' }); else res.destroy() }) }).listen(Number(process.env.PORT || 3200), '0.0.0.0')

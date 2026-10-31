@@ -218,6 +218,7 @@ export interface DashboardData {
   }
   sleep: {
     historyTrends?: TrendPoint[]
+    historySessions?: Array<SleepSession & { date: string }>
     sessions?: SleepSession[]
     mainSessionId?: string | null
     details?: SleepDetails
@@ -237,6 +238,10 @@ export interface DashboardData {
   }
   body: {
     weightKg: number | null
+    weightDate?: string | null
+    bodyFatDate?: string | null
+    bmiCalculated?: boolean
+    heightCm?: number | null
     weightGoalKg: number | null
     bmi: number | null
     bodyFat: number | null
@@ -305,7 +310,18 @@ export interface FitbitConfigInput {
   redirectUri: string
 }
 
+export type BodyHistoryMetric = 'weightKg' | 'bodyFat' | 'heightCm' | 'bmi' | 'waterMl' | 'caloriesIn' | 'bodyWaterMassKg' | 'boneMassKg' | 'leanBodyMassKg' | 'basalMetabolicRate'
+export interface BodyHistory { version: 1; days: Record<string, { metrics: Partial<Record<BodyHistoryMetric, { value: number; updatedAt: string; source?: 'health-connect' }>> }> }
+export interface BodyHistoryResult { history: BodyHistory; configured: boolean; syncedAt: string | null; error: string | null }
+export interface HealthHistorySummary { snapshots: number; firstDate: string | null; lastDate: string | null; endpoints: string[] }
+export interface HealthHistoryStatus { configured: boolean; syncedAt: string | null; error: string | null; summary: HealthHistorySummary }
 export interface FitbitBridge {
+  getBodyHistory?: (refresh?: boolean) => Promise<BodyHistoryResult>
+  getHealthHistoryStatus?: () => Promise<HealthHistoryStatus>
+  syncHealthHistory?: () => Promise<HealthHistoryStatus>
+  onHealthHistorySync?: (callback: (status: HealthHistoryStatus) => void) => () => void
+  getExerciseRoute?: (name: string, refresh?: boolean) => Promise<{ tcx: string; cached: boolean }>
+  exportExerciseRoute?: (name: string) => Promise<{ canceled: boolean }>
   getStatus: () => Promise<FitbitAuthStatus>
   saveConfig: (config: FitbitConfigInput) => Promise<FitbitAuthStatus>
   connect: () => Promise<{ ok: boolean; message?: string }>
@@ -333,6 +349,8 @@ export interface CloudBridge {
   getWorkoutLinks: () => Promise<WorkoutLinks>
   saveWorkoutLink: (input: WorkoutLinkInput) => Promise<WorkoutLinks>
   getArchive: () => Promise<{ archive: { version: 1; todos: TodoArchive; habits: HabitArchive; reports: ReportArchive }; rev: number }>
+  getHealthSnapshot?: (date: string) => Promise<{ version: 1; date: string; generatedAt: string; endpoints: Record<string, unknown> } | null>
+  getHealthHistorySummary?: () => Promise<HealthHistorySummary>
   saveArchive: (archive: { version: 1; todos: TodoArchive; habits: HabitArchive; reports: ReportArchive }, baseRev: number) => Promise<{ archive: unknown; rev: number }>
   getPdf: (hash: string) => Promise<string>
   savePdf: (hash: string, base64: string) => Promise<void>
